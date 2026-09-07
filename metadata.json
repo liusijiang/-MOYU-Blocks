@@ -1,0 +1,6 @@
+{
+  "name": "摸鱼方块",
+  "description": "10x10 棋盘俄罗斯方块放置消除游戏，支持手动放置与横纵消除。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
