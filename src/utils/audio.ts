@@ -230,6 +230,135 @@ class SoundEngine {
       osc.stop(now + cfg.duration + 0.05);
     });
   }
+
+  /** 7. 任务 010: 跨步连击大调五声音阶音效 (Pentatonic Streak Audio) */
+  public playStreakSound(streakCount: number) {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    // C Major Pentatonic Scale: C4, D4, E4, G4, A4, C5, D5, E5, G5, A5, C6, D6
+    const pentatonicNotes = [
+      261.63, 293.66, 329.63, 392.0, 440.0, 523.25, 587.33, 659.25, 783.99,
+      880.0, 1046.5, 1174.66,
+    ];
+    const noteIndex = Math.min(streakCount - 1, pentatonicNotes.length - 1);
+    const baseFreq = pentatonicNotes[Math.max(0, noteIndex)];
+
+    // 主音 (Triangle 晶体清脆质感)
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = streakCount >= 5 ? 'triangle' : 'sine';
+    osc.frequency.setValueAtTime(baseFreq, now);
+    osc.frequency.exponentialRampToValueAtTime(baseFreq * 1.02, now + 0.18);
+
+    gain.gain.setValueAtTime(0.18, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.22);
+
+    // 5+ Fever 狂热模式伴随高八度轻灵泛音
+    if (streakCount >= 5) {
+      const harmOsc = ctx.createOscillator();
+      const harmGain = ctx.createGain();
+      harmOsc.type = 'sine';
+      harmOsc.frequency.setValueAtTime(baseFreq * 2, now + 0.03);
+      harmGain.gain.setValueAtTime(0.1, now + 0.03);
+      harmGain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+      harmOsc.connect(harmGain);
+      harmGain.connect(ctx.destination);
+      harmOsc.start(now + 0.03);
+      harmOsc.stop(now + 0.25);
+    }
+  }
+
+  /** 8. 任务 010: 濒死护盾碎裂警报音 */
+  public playShieldBreakSound() {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(420, now);
+    osc.frequency.exponentialRampToValueAtTime(120, now + 0.25);
+
+    gain.gain.setValueAtTime(0.14, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.25);
+  }
+
+  /** 9. 任务 010: 连击护盾重新充能音 */
+  public playShieldRestoredSound() {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    const notes = [440, 554.37, 659.25]; // A major arpeggio
+    notes.forEach((f, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(f, now + i * 0.06);
+      gain.gain.setValueAtTime(0.12, now + i * 0.06);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.06 + 0.18);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + i * 0.06);
+      osc.stop(now + i * 0.06 + 0.18);
+    });
+  }
+
+  /** 10. 任务 010: 引力星块被动大坍缩次声滑音 */
+  public playResonanceCollapseSound() {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    // Sub-bass sweep 95Hz -> 28Hz
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(95, now);
+    osc.frequency.exponentialRampToValueAtTime(28, now + 0.45);
+
+    gain.gain.setValueAtTime(0.24, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.45);
+  }
+
+  /** 11. 任务 010: 琥珀微晶基石神圣降临音 */
+  public playKeystoneSpawnSound() {
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    const notes = [587.33, 739.99, 880.0, 1174.66]; // D-F#-A-D crystal shimmer
+    notes.forEach((f, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(f, now + i * 0.05);
+      gain.gain.setValueAtTime(0.15, now + i * 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.05 + 0.25);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now + i * 0.05);
+      osc.stop(now + i * 0.05 + 0.25);
+    });
+  }
 }
 
 export const sound = new SoundEngine();

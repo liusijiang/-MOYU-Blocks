@@ -5,7 +5,12 @@ import {
   EliminationPreview,
   PlacedPieceEntity,
 } from '../types';
-import { GRAVITY_BLOCK_COLOR } from '../constants/pieces';
+import {
+  GRAVITY_BLOCK_COLOR,
+  PIECE_TEMPLATES,
+  getRandomPiece,
+  createKeystonePiece,
+} from '../constants/pieces';
 
 export const BOARD_SIZE = 10;
 
@@ -255,13 +260,19 @@ export function getSimulatedClearLines(
 export function splitAndTrimCutEntities(
   entities: PlacedPieceEntity[],
   clearedRows: number[],
-  clearedCols: number[]
+  clearedCols: number[],
+  shatterCenters: Array<{ row: number; col: number }> = []
 ): {
   remainingEntities: PlacedPieceEntity[];
   newlyCreatedDebrisIds: Set<string>;
 } {
   const remainingEntities: PlacedPieceEntity[] = [];
   const newlyCreatedDebrisIds = new Set<string>();
+
+  const isInShatterZone = (boardR: number, boardC: number) =>
+    shatterCenters.some(
+      (sc) => Math.abs(boardR - sc.row) <= 2 && Math.abs(boardC - sc.col) <= 2
+    );
 
   for (const entity of entities) {
     const localH = entity.shape.length;
@@ -281,6 +292,23 @@ export function splitAndTrimCutEntities(
           if (isRowCleared || isColCleared) {
             grid[r][c] = 0;
             hasCutOccurred = true;
+          } else if (isInShatterZone(boardR, boardC)) {
+            // 将3x3区域内的积木都震碎，变成1x1的最小单位积木并施加重力下坠
+            grid[r][c] = 0;
+            hasCutOccurred = true;
+
+            const fragId = `shatter_1x1_${boardR}_${boardC}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+            const shatteredPiece: PlacedPieceEntity = {
+              id: fragId,
+              color: entity.color,
+              startRow: boardR,
+              startCol: boardC,
+              shape: [[1]],
+              isDebris: true,
+              isGravityBlock: entity.isGravityBlock ?? false,
+            };
+            remainingEntities.push(shatteredPiece);
+            newlyCreatedDebrisIds.add(fragId);
           } else {
             grid[r][c] = 1;
             hasAnyAliveCell = true;
@@ -291,7 +319,7 @@ export function splitAndTrimCutEntities(
       }
     }
 
-    // Completely eliminated
+    // Completely eliminated or entirely shattered into 1x1 pieces
     if (!hasAnyAliveCell) continue;
 
     // Uncut entity: preserves original shape and debris state
@@ -300,7 +328,7 @@ export function splitAndTrimCutEntities(
       continue;
     }
 
-    // Cut entity: Extract 4-connected components using BFS
+    // Cut entity: Extract remaining 4-connected components using BFS
     const visited = Array.from({ length: localH }, () =>
       Array(localW).fill(false)
     );
@@ -592,5 +620,225 @@ export function rebuildBoardFromEntities(
   }
   return newBoard;
 }
+
+/**
+ * ========================================================
+ * 任务 010: 跨步连击、引力共鸣与自适应发牌算法
+ * ========================================================
+ */
+
+/**
+ * 统计棋盘上的空单元格数量
+ */
+export function countEmptyCells(board: BoardState): number {
+  let count = 0;
+  for (let r = 0; r < BOARD_SIZE; r++) {
+    for (let c = 0; c < BOARD_SIZE; c++) {
+      if (board[r][c] === null) count++;
+    }
+  }
+  return count;
+}
+
+/**
+ * 寻找方块在自身相对网格中的最底端单元格（行号最大，并列取最靠左者）
+ * 用于引力共鸣星块落盘后将该格转化为紫色重力核心
+ */
+export function findBottomMostCellInPiece(shape: number[][]): { r: number; c: number } {
+  let maxR = -1;
+  let bestC = -1;
+  for (let r = 0; r < shape.length; r++) {
+    for (let c = 0; c < shape[r].length; c++) {
+      if (shape[r][c] === 1) {
+        if (r > maxR) {
+          maxR = r;
+          bestC = c;
+        } else if (r === maxR && (bestC === -1 || c < bestC)) {
+          bestC = c;
+        }
+      }
+    }
+  }
+  return { r: Math.max(0, maxR), c: Math.max(0, bestC) };
+}
+
+/**
+ * 计算单步消除对于引力共鸣蓄能槽的充能百分比增量
+ */
+export function calculateResonanceDelta(clearedLines: number, cascadeStep: number = 1): number {
+  if (clearedLines === 0) {
+    return 2.0; // 普通有效放置（未消行）
+  }
+  let baseDelta = 0;
+  if (clearedLines === 1) {
+    baseDelta = 7.0;
+  } else if (clearedLines === 2) {
+    baseDelta = 18.0;
+  } else {
+    baseDelta = 35.0; // 三行及以上
+  }
+  // 物理二级级联额外奖励
+  if (cascadeStep > 1) {
+    baseDelta += (cascadeStep - 1) * 10.0;
+  }
+  return baseDelta;
+}
+
+/**
+ * 任务 010 统一闭环单回合得分计算公式:
+ * StepScore = (BasePlacement + LinesCleared * 100 * CascadeStep) * (1 + StreakCount * 0.25) * FeverMultiplier
+ */
+export function calculateStepScore(
+  placedBlocks: number,
+  linesCleared: number,
+  cascadeStep: number = 1,
+  streakCount: number = 0
+): number {
+  const basePlacement = placedBlocks * 10;
+  const lineScore = linesCleared * 100 * cascadeStep;
+  const streakMultiplier = 1 + streakCount * 0.25;
+  const feverMultiplier = streakCount >= 5 ? 1.5 : 1.0;
+
+  return Math.round((basePlacement + lineScore) * streakMultiplier * feverMultiplier);
+}
+
+/**
+ * 任务 010 自适应发牌器：
+ * 四层过滤引擎：
+ * Layer 1: 全局 28 种形态全死扫描 -> 若全死且有空格且双轨限频就绪，破格生成 1x1 Keystone
+ * Layer 2: 防猝死兜底（动态衰减权重从有解集选取）
+ * Layer 3: 历史同形抑制（降权最近出过的方块）
+ * Layer 4: 临界行近失加权（能消行的方块权重大幅提升）
+ */
+export function getAdaptiveRandomPiece(
+  board: BoardState,
+  keystoneCooldown: number,
+  keystoneUsageCount: number,
+  recentBaseNames: string[] = []
+): Piece {
+  // 1. 扫描 28 个姿态在当前棋盘中的可行性
+  const playableTemplates: (typeof PIECE_TEMPLATES)[0][] = [];
+  for (const template of PIECE_TEMPLATES) {
+    const dummyPiece: Piece = {
+      id: 'dummy',
+      name: template.name,
+      shape: template.shape,
+      color: template.color,
+      borderColor: template.borderColor,
+    };
+    if (canPieceFitAnywhere(board, dummyPiece)) {
+      playableTemplates.push(template);
+    }
+  }
+
+  // Layer 1: 绝对死局破格救援
+  const emptyCount = countEmptyCells(board);
+  if (playableTemplates.length === 0 && emptyCount >= 1 && keystoneCooldown <= 0 && keystoneUsageCount < 2) {
+    return createKeystonePiece();
+  }
+
+  // 若无可用且无法生成基石，保底常规随机
+  if (playableTemplates.length === 0) {
+    return getRandomPiece();
+  }
+
+  // Layer 2, 3, 4: 从合法候选集中加权轮盘选取
+  const weightedCandidates = playableTemplates.map((tpl) => {
+    let weight = 100;
+
+    // Layer 3: 历史同形抑制（如果与最近出现的形态基础名字一致，降权 60%）
+    const baseName = tpl.name.split('-')[1]; // e.g. "I", "O", "T"
+    if (recentBaseNames.includes(baseName)) {
+      weight *= 0.4;
+    }
+
+    // Layer 4: 近失加权（如果该方块能在棋盘上直接促成消除，提升权重）
+    let canClear = false;
+    const dummyPiece: Piece = {
+      id: 'test',
+      name: tpl.name,
+      shape: tpl.shape,
+      color: tpl.color,
+      borderColor: tpl.borderColor,
+    };
+
+    outerLoop:
+    for (let r = 0; r <= BOARD_SIZE - tpl.shape.length; r++) {
+      for (let c = 0; c <= BOARD_SIZE - tpl.shape[0].length; c++) {
+        if (canPlacePiece(board, dummyPiece, r, c)) {
+          const sim = getSimulatedClearLines(board, dummyPiece, r, c);
+          if (sim.totalLines > 0) {
+            canClear = true;
+            break outerLoop;
+          }
+        }
+      }
+    }
+
+    if (canClear) {
+      weight *= 1.8; // 能消行的方块权重提升 80%
+    }
+
+    return { template: tpl, weight };
+  });
+
+  // 轮盘赌抽样
+  const totalWeight = weightedCandidates.reduce((acc, curr) => acc + curr.weight, 0);
+  let randomRoll = Math.random() * totalWeight;
+  let chosenTemplate = weightedCandidates[0].template;
+
+  for (const item of weightedCandidates) {
+    if (randomRoll <= item.weight) {
+      chosenTemplate = item.template;
+      break;
+    }
+    randomRoll -= item.weight;
+  }
+
+  return {
+    name: chosenTemplate.name,
+    shape: chosenTemplate.shape,
+    color: chosenTemplate.color,
+    borderColor: chosenTemplate.borderColor,
+    id: `${chosenTemplate.name}-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+  };
+}
+
+/**
+ * 任务 010 濒死拦截与就地重构（Emergency In-Place Morph）:
+ * 核心安全气囊：当托盘中所有剩余方块全死时，若冷却与单局次数就绪且有空格，
+ * 立即在托盘中就地重构首个死方块为 1x1 Keystone 琥珀微晶基石，逆转 Game Over！
+ */
+export function tryEmergencyKeystoneRescue(
+  board: BoardState,
+  pieces: (Piece | null)[],
+  cooldown: number,
+  usageCount: number
+): { rescued: boolean; updatedPieces: (Piece | null)[] } {
+  const availablePieces = pieces.filter((p): p is Piece => p !== null);
+  if (availablePieces.length === 0) {
+    return { rescued: false, updatedPieces: pieces };
+  }
+
+  const isAnyPlayable = availablePieces.some((p) => canPieceFitAnywhere(board, p));
+  if (isAnyPlayable) {
+    return { rescued: false, updatedPieces: pieces };
+  }
+
+  // 托盘全死！检验双轨限频与空格条件
+  const emptyCells = countEmptyCells(board);
+  if (emptyCells >= 1 && cooldown <= 0 && usageCount < 2) {
+    const nextPieces = [...pieces];
+    // 找到首个不可用的方块，就地重构为 1x1 Keystone
+    const deadSlotIndex = nextPieces.findIndex((p) => p !== null);
+    if (deadSlotIndex !== -1) {
+      nextPieces[deadSlotIndex] = createKeystonePiece();
+      return { rescued: true, updatedPieces: nextPieces };
+    }
+  }
+
+  return { rescued: false, updatedPieces: pieces };
+}
+
 
 

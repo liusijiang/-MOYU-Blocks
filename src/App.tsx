@@ -21,11 +21,21 @@ import {
   computeGravityCascadeDrops,
   checkAndSpawnGravityBlock,
   rebuildBoardFromEntities,
+  getAdaptiveRandomPiece,
+  calculateResonanceDelta,
+  calculateStepScore,
+  findBottomMostCellInPiece,
 } from './utils/gameLogic';
-import { getRandomPiece, generateInitialPieces } from './constants/pieces';
+import {
+  getRandomPiece,
+  generateInitialPieces,
+  GRAVITY_BLOCK_COLOR,
+} from './constants/pieces';
 import { Board } from './components/Board';
 import { PieceTray } from './components/PieceTray';
 import { DragOverlay } from './components/DragOverlay';
+import { ComboBadge } from './components/ComboBadge';
+import { ResonanceBar } from './components/ResonanceBar';
 import { AuthModal } from './components/AuthModal';
 import { RankStatusBar } from './components/RankStatusBar';
 import { LeaderboardModal } from './components/LeaderboardModal';
@@ -66,6 +76,7 @@ export default function App() {
   const [gameOver, setGameOver] = useState<boolean>(false);
   const [isCascading, setIsCascading] = useState<boolean>(false);
   const [isGlobalGravityPulseActive, setIsGlobalGravityPulseActive] = useState<boolean>(false);
+  const [shatterShockwaveCenters, setShatterShockwaveCenters] = useState<Array<{ row: number; col: number }>>([]);
   const [fallDuration, setFallDuration] = useState<number>(240);
   const [isMuted, setIsMuted] = useState<boolean>(() => sound.getMuted());
   const [clearingRows, setClearingRows] = useState<number[]>([]);
@@ -77,6 +88,15 @@ export default function App() {
   const [isLeaderboardModalOpen, setIsLeaderboardModalOpen] = useState(false);
   const [rankContext, setRankContext] = useState<ScoreRankContext | null>(null);
   const [isCloudSynced, setIsCloudSynced] = useState(false);
+
+  // 任务 010: 跨步连击、引力共鸣与自适应微晶基石状态
+  const [streakCount, setStreakCount] = useState<number>(0);
+  const [comboShield, setComboShield] = useState<boolean>(true);
+  const [consecutiveClears, setConsecutiveClears] = useState<number>(0);
+  const [resonanceEnergy, setResonanceEnergy] = useState<number>(0);
+  const [keystoneCooldownSteps, setKeystoneCooldownSteps] = useState<number>(0);
+  const [keystoneUsageCount, setKeystoneUsageCount] = useState<number>(0);
+  const [recentShapes, setRecentShapes] = useState<string[]>([]);
 
   // Dragging and preview state
   const [activeDrag, setActiveDrag] = useState<ActiveDragState | null>(null);
@@ -201,7 +221,7 @@ export default function App() {
       ? pieces[selectedSlotIndex]
       : null;
 
-  // Check if any of the candidate pieces can fit anywhere on board
+  // Check if any of the candidate pieces can fit anywhere on board (Game Over if none can fit)
   const checkGameOver = useCallback(
     (currentBoard: BoardState, candidatePieces: Piece[]) => {
       const hasAnyMove = candidatePieces.some((piece) =>
@@ -263,14 +283,23 @@ export default function App() {
       setIsCascading(true);
 
       try {
+        const isResonancePiece = Boolean(piece.isResonancePiece);
+        const isKeystonePiece = Boolean(piece.isKeystone);
+
         // 1. Calculate placed blocks count
         const placedBlocks = piece.shape.flat().filter((v) => v === 1).length;
 
         // Immediate tactile placement snap sound (T=0ms) - plays for EVERY piece placement!
         sound.playPiecePlaced(placedBlocks);
 
+        if (isKeystonePiece) {
+          setKeystoneCooldownSteps(15);
+          setKeystoneUsageCount((prev) => prev + 1);
+          sound.playKeystoneSpawnSound();
+        }
+
         // 2. Put piece on board
-        const boardWithPiece = placePieceOnBoard(board, piece, row, col);
+        let boardWithPiece = placePieceOnBoard(board, piece, row, col);
 
         // Construct placed entity
         const newEntity: PlacedPieceEntity = {
@@ -284,9 +313,39 @@ export default function App() {
         };
         let currentEntities: PlacedPieceEntity[] = [...placedPieces, newEntity];
 
-        // 3. Immediately refill ONLY this placed piece's slot!
+        // 任务 010: 引力星块落盘转化核心机制
+        if (isResonancePiece) {
+          const bottomCell = findBottomMostCellInPiece(piece.shape);
+          const coreRow = row + bottomCell.r;
+          const coreCol = col + bottomCell.c;
+          newEntity.shape[bottomCell.r][bottomCell.c] = 0; // 从母体剥离该单元格
+          boardWithPiece[coreRow][coreCol] = GRAVITY_BLOCK_COLOR;
+
+          const resonanceGravityCoreEntity: PlacedPieceEntity = {
+            id: `resonance_core_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            color: GRAVITY_BLOCK_COLOR,
+            startRow: coreRow,
+            startCol: coreCol,
+            shape: [[1]],
+            isDebris: false,
+            isGravityBlock: true,
+          };
+          currentEntities.push(resonanceGravityCoreEntity);
+
+          sound.playResonanceCollapseSound();
+          setResonanceEnergy(0);
+        }
+
+        // 3. Immediately refill ONLY this placed piece's slot using Task 010 adaptive engine!
         const nextPieces = [...pieces];
-        nextPieces[slotIndex] = getRandomPiece();
+        const generatedPiece = getAdaptiveRandomPiece(
+          boardWithPiece,
+          keystoneCooldownSteps,
+          keystoneUsageCount,
+          recentShapes
+        );
+        nextPieces[slotIndex] = generatedPiece;
+        setRecentShapes((prev) => [generatedPiece.name.split('-')[1], ...prev].slice(0, 3));
         setPieces(nextPieces);
 
         // Reset selection and previews
@@ -302,6 +361,10 @@ export default function App() {
         let currentBoard = boardWithPiece;
         let cascadeStep = 1;
         let hasMoreCascade = true;
+        let totalClearedInTurn = 0;
+        let maxCascadeStep = 1;
+        let hasTriggeredShatterInTurn = false;
+        let isGlobalGravityUnlocked = false;
 
         while (hasMoreCascade && cascadeStep <= 10) {
           // 4. Check line eliminations
@@ -310,10 +373,14 @@ export default function App() {
           if (totalLines === 0) {
             // If no lines cleared at all on initial drop
             if (cascadeStep === 1) {
-              setScore((prev) => prev + placedBlocks);
+              const placementScore = calculateStepScore(placedBlocks, 0, 1, streakCount);
+              setScore((prev) => prev + placementScore);
             }
             break;
           }
+
+          totalClearedInTurn += totalLines;
+          maxCascadeStep = Math.max(maxCascadeStep, cascadeStep);
 
           // Check if any existing 1x1 Gravity Block on board was eliminated
           const clearedGravityCores = currentEntities.filter(
@@ -321,7 +388,21 @@ export default function App() {
               e.isGravityBlock &&
               (clearedRows.includes(e.startRow) || clearedCols.includes(e.startCol))
           );
-          const isGlobalSurge = clearedGravityCores.length > 0;
+          const hasShatterShockwave = clearedGravityCores.length > 0;
+          if (hasShatterShockwave) {
+            hasTriggeredShatterInTurn = true;
+          }
+          const shatterCenters = clearedGravityCores.map((c) => ({
+            row: c.startRow,
+            col: c.startCol,
+          }));
+
+          // 🌟 任务 011 核心跃迁判定：
+          // 若本回合震碎过引力核心，且后续步骤（cascadeStep > 1）激发了深层连环消行，
+          // 全局重力瞬间解锁！
+          if (hasTriggeredShatterInTurn && cascadeStep > 1) {
+            isGlobalGravityUnlocked = true;
+          }
 
           // Check if this step qualifies for spawning a new 1x1 Gravity Block
           // Rule: 2+ rows, or 2+ cols, or 1+ row AND 1+ col
@@ -331,15 +412,27 @@ export default function App() {
             clearedCols
           );
 
-          // Calculate score
-          const stepScore = totalLines * 100 * totalLines * cascadeStep;
-          setScore((prev) => prev + stepScore + (cascadeStep === 1 ? placedBlocks : 0));
+          // Calculate score using Task 010 unified closed-loop formula
+          const stepScore = calculateStepScore(
+            cascadeStep === 1 ? placedBlocks : 0,
+            totalLines,
+            cascadeStep,
+            streakCount
+          );
+          setScore((prev) => prev + stepScore);
 
           // Audio & Notification Toast
           let toastTitle = '';
-          if (isGlobalSurge) {
+          if (hasShatterShockwave) {
             sound.playGlobalGravityPulse();
-            toastTitle = `引力核心引爆! 全局碎片重力触发 (+${stepScore})`;
+            sound.playDebrisFracture();
+            toastTitle = `引力核心震碎! 5x5区域积木崩落 (+${stepScore})`;
+          } else if (isGlobalGravityUnlocked) {
+            sound.playGlobalGravityPulse();
+            sound.playCascadeCombo(cascadeStep);
+            setIsGlobalGravityPulseActive(true);
+            setTimeout(() => setIsGlobalGravityPulseActive(false), 550);
+            toastTitle = `⚡ 引力共振过载! 全场积木大雪崩 x${cascadeStep} (+${stepScore})`;
           } else if (cascadeStep > 1) {
             sound.playCascadeCombo(cascadeStep);
             toastTitle = `连环消除 x${cascadeStep}! 重力连锁 (+${stepScore})`;
@@ -375,23 +468,24 @@ export default function App() {
           // Line elimination flash (220ms)
           setClearingRows(clearedRows);
           setClearingCols(clearedCols);
-          if (isGlobalSurge) {
-            setIsGlobalGravityPulseActive(true);
+          if (hasShatterShockwave) {
+            setShatterShockwaveCenters(shatterCenters);
           }
 
           await sleep(220);
 
           setClearingRows([]);
           setClearingCols([]);
-          if (isGlobalSurge) {
-            setTimeout(() => setIsGlobalGravityPulseActive(false), 500);
+          if (hasShatterShockwave) {
+            setTimeout(() => setShatterShockwaveCenters([]), 450);
           }
 
-          // 5. BFS topological cutting into 4-connected components & debris
+          // 5. BFS topological cutting into 4-connected components & debris, plus 5x5 shockwave shattering
           const { remainingEntities, newlyCreatedDebrisIds } = splitAndTrimCutEntities(
             currentEntities,
             clearedRows,
-            clearedCols
+            clearedCols,
+            shatterCenters
           );
 
           let postCutEntities = remainingEntities;
@@ -405,22 +499,18 @@ export default function App() {
           setPlacedPieces(currentEntities);
           setBoard(currentBoard);
 
-          // Anticipation Hang-Time (110ms):
-          // Let the player visually register the cut debris suspended in mid-air before plunging!
+          // Anticipation Hang-Time (110ms)
           await sleep(GRAVITY_KINETICS_CONFIG.anticipationHangTimeMs);
 
-          // 6. Determine which debris should fall
+          // 6. Determine which entities should fall under gravity:
+          // 任务 011 物理重力两阶段机制：
+          // 阶段二（全局重力大雪崩）：若全局重力已解锁，全场所有存活积木实体一齐受重力垂直下落，激发更多连环消！
+          // 阶段一（引信阶段）：仅新震碎的 1x1 碎块 + 场上的重力方块下落。
           let targetDebrisIds: Set<string>;
-          if (isGlobalSurge) {
-            // Global surge: ALL debris + any gravity blocks on board drop
-            targetDebrisIds = new Set(
-              currentEntities
-                .filter((e) => e.isDebris || e.isGravityBlock)
-                .map((e) => e.id)
-            );
+          if (isGlobalGravityUnlocked) {
+            targetDebrisIds = new Set<string>(currentEntities.map((e) => e.id));
           } else {
-            // Local surge: newly created debris + any gravity blocks that may be floating
-            targetDebrisIds = new Set([
+            targetDebrisIds = new Set<string>([
               ...newlyCreatedDebrisIds,
               ...currentEntities.filter((e) => e.isGravityBlock).map((e) => e.id),
             ]);
@@ -446,10 +536,10 @@ export default function App() {
           const dropDuration = calculateGravityDropDuration(dropResult.maxDistance);
           setFallDuration(dropDuration);
 
-          // Debris falling sound with steep downward exponential ramp
+          // Debris falling sound
           sound.playDebrisFalling();
 
-          // Apply updated positions (triggers smooth CSS vertical glide with Ease-In gravity curve)
+          // Apply updated positions
           setPlacedPieces(dropResult.updatedEntities);
           setBoard(dropResult.updatedBoard);
           currentEntities = dropResult.updatedEntities;
@@ -464,7 +554,7 @@ export default function App() {
           // Settle pause before next cascade step check
           await sleep(GRAVITY_KINETICS_CONFIG.settlePauseMs);
 
-          // Next cascade step to check if settled debris formed new full lines
+          // Next cascade step
           cascadeStep++;
         }
 
@@ -472,7 +562,68 @@ export default function App() {
         setPlacedPieces(currentEntities);
         setBoard(currentBoard);
 
-        // Check game over
+        // 任务 010: 回合平息后连击与护盾收敛结算
+        if (!isKeystonePiece) {
+          setKeystoneCooldownSteps((prev) => Math.max(0, prev - 1));
+        }
+
+        let nextStreak = streakCount;
+        if (totalClearedInTurn > 0) {
+          nextStreak = streakCount + 1;
+          setStreakCount(nextStreak);
+          const nextConsecutive = consecutiveClears + 1;
+          setConsecutiveClears(nextConsecutive);
+
+          if (nextConsecutive >= 2 && !comboShield) {
+            setComboShield(true);
+            sound.playShieldRestoredSound();
+          }
+          sound.playStreakSound(nextStreak);
+        } else {
+          setConsecutiveClears(0);
+          if (comboShield) {
+            // 护盾消耗，保住连击数！
+            setComboShield(false);
+            sound.playShieldBreakSound();
+          } else {
+            // 护盾已破且再次未消行，连击归零
+            nextStreak = 0;
+            setStreakCount(0);
+          }
+        }
+
+        // 任务 010: 引力共鸣槽蓄能增量与原位附魔
+        if (!isResonancePiece) {
+          const delta = calculateResonanceDelta(totalClearedInTurn, maxCascadeStep);
+          const nextEnergy = Math.min(100, resonanceEnergy + delta);
+          setResonanceEnergy(nextEnergy);
+
+          if (nextEnergy >= 100) {
+            const targetIdx = nextPieces.findIndex(
+              (p) => p !== null && !p.isResonancePiece && !p.isKeystone
+            );
+            if (targetIdx !== -1) {
+              nextPieces[targetIdx] = {
+                ...nextPieces[targetIdx]!,
+                isResonancePiece: true,
+              };
+              sound.playShieldRestoredSound();
+              setEliminationToast({
+                id: `resonance_morph_${Date.now()}`,
+                title: '引力共鸣100%! 首块蜕变为引力星块!',
+                scoreBonus: 0,
+                totalLines: 0,
+              });
+              if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+              toastTimeoutRef.current = setTimeout(() => {
+                setEliminationToast(null);
+              }, 3000);
+            }
+          }
+        }
+        setPieces(nextPieces);
+
+        // Check game over (with emergency keystone rescue)
         if (checkGameOver(currentBoard, nextPieces)) {
           setGameOver(true);
         }
@@ -480,7 +631,21 @@ export default function App() {
         setIsCascading(false);
       }
     },
-    [board, gameOver, isCascading, pieces, placedPieces, checkGameOver]
+    [
+      board,
+      gameOver,
+      isCascading,
+      pieces,
+      placedPieces,
+      checkGameOver,
+      streakCount,
+      comboShield,
+      consecutiveClears,
+      resonanceEnergy,
+      keystoneCooldownSteps,
+      keystoneUsageCount,
+      recentShapes,
+    ]
   );
 
   // Setup active pointer drag
@@ -666,8 +831,18 @@ export default function App() {
     setGameOver(false);
     setIsCascading(false);
     setIsGlobalGravityPulseActive(false);
+    setShatterShockwaveCenters([]);
     setClearingRows([]);
     setClearingCols([]);
+
+    // 任务 010 状态重置
+    setStreakCount(0);
+    setComboShield(true);
+    setConsecutiveClears(0);
+    setResonanceEnergy(0);
+    setKeystoneCooldownSteps(0);
+    setKeystoneUsageCount(0);
+    setRecentShapes([]);
 
     if (currentUser) {
       clearGameProgress(currentUser.id);
@@ -789,6 +964,15 @@ export default function App() {
 
       {/* Main Board Area (Strictly stabilized & pinned) */}
       <main className="relative my-auto flex flex-col items-center justify-center">
+        {/* 任务 010: 跨步连击与狂热状态浮动徽标 */}
+        <div className="mb-2 min-h-[28px] flex items-center justify-center z-20">
+          <ComboBadge
+            streakCount={streakCount}
+            comboShield={comboShield}
+            isCascading={isCascading}
+          />
+        </div>
+
         <Board
           board={board}
           placedPieces={placedPieces}
@@ -804,7 +988,15 @@ export default function App() {
           boardRef={boardRef}
           cellPixelSize={cellPixelSize}
           isGlobalGravityPulseActive={isGlobalGravityPulseActive}
+          shatterShockwaveCenters={shatterShockwaveCenters}
           fallDuration={fallDuration}
+          isFeverMode={streakCount >= 5}
+        />
+
+        {/* 任务 010: 引力共鸣蓄能微光导轨 */}
+        <ResonanceBar
+          energy={resonanceEnergy}
+          isFull={resonanceEnergy >= 100}
         />
 
         {/* Game Over Dialog Overlay */}

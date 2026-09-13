@@ -12,6 +12,8 @@ export interface Piece {
   slotIndex?: number;
   isDebris?: boolean;
   isGravityBlock?: boolean;
+  isResonancePiece?: boolean;  // 任务 010: 是否被引力共鸣星块赋能
+  isKeystone?: boolean;        // 任务 010: 是否为 1x1 稀缺微晶基石
 }
 
 export interface CellBorderInfo {

@@ -26,7 +26,9 @@ interface BoardProps {
   boardRef: React.RefObject<HTMLDivElement | null>;
   cellPixelSize: number;
   isGlobalGravityPulseActive?: boolean;
+  shatterShockwaveCenters?: Array<{ row: number; col: number }>;
   fallDuration?: number;
+  isFeverMode?: boolean;
 }
 
 export const Board: React.FC<BoardProps> = ({
@@ -44,7 +46,9 @@ export const Board: React.FC<BoardProps> = ({
   boardRef,
   cellPixelSize,
   isGlobalGravityPulseActive = false,
+  shatterShockwaveCenters = [],
   fallDuration = 240,
+  isFeverMode = false,
 }) => {
   const activePieceForPreview = activeDragPiece || selectedPiece;
 
@@ -83,7 +87,11 @@ export const Board: React.FC<BoardProps> = ({
       {/* Rigid outer frame: guarantees stillness, perfectly centers playable grid */}
       <div
         id="game-board-frame"
-        className="w-[320px] h-[320px] sm:w-[380px] sm:h-[380px] md:w-[410px] md:h-[410px] p-2 sm:p-2.5 bg-slate-900/95 rounded-2xl shadow-2xl border-2 border-slate-700/80 box-border flex items-center justify-center overflow-hidden"
+        className={`w-[320px] h-[320px] sm:w-[380px] sm:h-[380px] md:w-[410px] md:h-[410px] p-2 sm:p-2.5 bg-slate-900/95 rounded-2xl shadow-2xl transition-all duration-300 box-border flex items-center justify-center overflow-hidden ${
+          isFeverMode
+            ? 'border-2 border-amber-400/90 ring-4 ring-amber-500/30 shadow-[0_0_25px_rgba(245,158,11,0.4)]'
+            : 'border-2 border-slate-700/80'
+        }`}
       >
         {/* Playable 10x10 Grid (Zero gap, exact cell pixel matching) */}
         <div
@@ -186,14 +194,42 @@ export const Board: React.FC<BoardProps> = ({
             </div>
           ))}
 
-          {/* 2.5 Global Gravity Shockwave Wavefront */}
+          {/* 2.5 5x5 Shatter Shockwave Overlays */}
+          {shatterShockwaveCenters && shatterShockwaveCenters.length > 0 && (
+            <div
+              id="shatter-shockwave-overlay"
+              className="absolute inset-0 pointer-events-none z-25 overflow-hidden"
+            >
+              {shatterShockwaveCenters.map((sc, idx) => {
+                const minR = Math.max(0, sc.row - 2);
+                const maxR = Math.min(9, sc.row + 2);
+                const minC = Math.max(0, sc.col - 2);
+                const maxC = Math.min(9, sc.col + 2);
+                const width = (maxC - minC + 1) * cellPixelSize;
+                const height = (maxR - minR + 1) * cellPixelSize;
+                const top = minR * cellPixelSize;
+                const left = minC * cellPixelSize;
+
+                return (
+                  <div key={`shockwave-${idx}-${sc.row}-${sc.col}`} className="absolute" style={{ top, left, width, height }}>
+                    {/* Expanding shockwave burst */}
+                    <div className="absolute inset-0 rounded-2xl border-2 border-cyan-400 bg-cyan-500/25 shadow-[0_0_35px_rgba(6,182,212,0.95)] animate-ping" />
+                    {/* 5x5 Shatter Highlight Aura */}
+                    <div className="absolute inset-0 rounded-2xl border-2 border-cyan-300 ring-2 ring-cyan-500/80 bg-cyan-950/40 backdrop-brightness-125 shadow-[0_0_25px_rgba(6,182,212,0.8)] animate-pulse" />
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* 2.6 Global Gravity Shockwave Wavefront */}
           {isGlobalGravityPulseActive && (
             <div
               id="gravity-shockwave"
               className="absolute inset-0 pointer-events-none z-25 flex items-center justify-center overflow-hidden"
             >
-              <div className="w-full h-full rounded-xl border-4 border-violet-400/90 shadow-[0_0_30px_rgba(168,85,247,0.8)] animate-ping opacity-80" />
-              <div className="absolute w-40 h-40 rounded-full bg-violet-600/30 blur-2xl animate-pulse" />
+              <div className="w-full h-full rounded-xl border-4 border-cyan-400/90 shadow-[0_0_40px_rgba(6,182,212,0.9)] animate-ping opacity-90" />
+              <div className="absolute w-48 h-48 rounded-full bg-cyan-500/30 blur-2xl animate-pulse" />
             </div>
           )}
 

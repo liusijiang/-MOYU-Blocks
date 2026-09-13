@@ -1,7 +1,7 @@
 import React from 'react';
 import { Piece } from '../types';
 import { getPieceCellBorders } from '../utils/gameLogic';
-import { Atom } from 'lucide-react';
+import { Disc3, Sparkles } from 'lucide-react';
 
 interface ConnectedPieceProps {
   piece: Piece;
@@ -27,10 +27,17 @@ export const ConnectedPiece: React.FC<ConnectedPieceProps> = ({
   const numRows = piece.shape.length;
   const numCols = piece.shape[0].length;
   const isGravityCore = Boolean(piece.isGravityBlock);
+  const isKeystone = Boolean(piece.isKeystone);
+  const isResonance = Boolean(piece.isResonancePiece);
+
+  const resonanceWrapperGlow =
+    isResonance && !isGhost
+      ? 'drop-shadow-[0_0_12px_rgba(168,85,247,0.7)] drop-shadow-[0_0_5px_rgba(251,191,36,0.6)]'
+      : '';
 
   return (
     <div
-      className={`inline-grid select-none pointer-events-none transition-transform ${className}`}
+      className={`inline-grid select-none pointer-events-none transition-transform ${resonanceWrapperGlow} ${className}`}
       style={{
         gridTemplateColumns: `repeat(${numCols}, ${cellSize}px)`,
         gridTemplateRows: `repeat(${numRows}, ${cellSize}px)`,
@@ -69,9 +76,15 @@ export const ConnectedPiece: React.FC<ConnectedPieceProps> = ({
 
           let bgClass = piece.color;
 
-          if (isGravityCore) {
-            borderClasses = 'border-2 border-purple-400 rounded-lg shadow-[0_0_12px_rgba(168,85,247,0.7)] ring-1 ring-purple-300/60';
-            bgClass = 'bg-gradient-to-br from-indigo-950 via-purple-900 to-violet-800';
+          if (isKeystone) {
+            borderClasses = 'border-2 border-amber-200 rounded-lg shadow-[0_0_12px_rgba(245,158,11,0.9)] ring-1 ring-amber-300/80';
+            bgClass = 'bg-gradient-to-br from-amber-300 via-amber-400 to-amber-600';
+          } else if (isGravityCore) {
+            borderClasses = 'border-2 border-cyan-400 rounded-lg shadow-[0_0_16px_rgba(6,182,212,0.85)] ring-2 ring-cyan-300/70';
+            bgClass = 'bg-gradient-to-br from-slate-950 via-cyan-950 to-teal-950';
+          } else if (isResonance) {
+            borderClasses = 'border-2 border-purple-300 rounded-sm shadow-[0_0_12px_rgba(192,132,252,0.9)] ring-1 ring-amber-300/80';
+            bgClass = 'bg-gradient-to-br from-indigo-900 via-purple-900 to-amber-950';
           }
 
           if (isGhost) {
@@ -80,7 +93,7 @@ export const ConnectedPiece: React.FC<ConnectedPieceProps> = ({
               : 'bg-rose-500/60';
           } else if (isClearing) {
             bgClass = isGravityCore
-              ? 'bg-white brightness-200 shadow-xl shadow-purple-400/90 transition-colors duration-200'
+              ? 'bg-white brightness-200 shadow-xl shadow-cyan-400/90 transition-colors duration-200'
               : 'bg-white brightness-200 shadow-md shadow-white/80 transition-colors duration-200';
           }
 
@@ -98,16 +111,50 @@ export const ConnectedPiece: React.FC<ConnectedPieceProps> = ({
               {/* Subtle glossy sheen on each cell */}
               <div className="absolute inset-0 bg-gradient-to-b from-white/15 to-transparent pointer-events-none" />
 
-              {/* Gravity singularity core animation */}
+              {/* Keystone Amber Crystal shimmer */}
+              {isKeystone && !isGhost && (
+                <div className="relative flex items-center justify-center w-full h-full">
+                  <div className="absolute w-2.5 h-2.5 rounded-full bg-amber-200 blur-[2px] animate-pulse" />
+                  <Sparkles
+                    className="text-amber-100 drop-shadow-[0_0_6px_rgba(254,240,138,0.9)] animate-pulse"
+                    style={{
+                      width: Math.max(14, cellSize * 0.65),
+                      height: Math.max(14, cellSize * 0.65),
+                    }}
+                  />
+                </div>
+              )}
+
+              {/* Gravity singularity core animation (Obsidian & Electric Cyan Event Horizon) */}
               {isGravityCore && !isGhost && (
                 <div className="relative flex items-center justify-center w-full h-full">
-                  <div className="absolute w-2 h-2 rounded-full bg-violet-400 blur-[2px] animate-pulse" />
-                  <Atom
-                    className="text-cyan-300 drop-shadow-[0_0_6px_rgba(34,211,238,0.9)] animate-spin"
+                  {/* Cyan event horizon halo */}
+                  <div className="absolute w-3.5 h-3.5 rounded-full bg-cyan-400/30 blur-[2px] animate-pulse" />
+                  {/* Deep black singularity core dot */}
+                  <div className="absolute w-2 h-2 rounded-full bg-slate-950 ring-1 ring-cyan-300 shadow-[0_0_6px_#06b6d4] z-10" />
+                  {/* Accretion disc vortex */}
+                  <Disc3
+                    className="text-cyan-300 drop-shadow-[0_0_8px_rgba(6,182,212,0.95)] animate-spin"
                     style={{
-                      width: Math.max(14, cellSize * 0.58),
-                      height: Math.max(14, cellSize * 0.58),
-                      animationDuration: '3s',
+                      width: Math.max(15, cellSize * 0.68),
+                      height: Math.max(15, cellSize * 0.68),
+                      animationDuration: '2.4s',
+                    }}
+                  />
+                </div>
+              )}
+
+              {/* Resonance Piece: Purple-Gold Galaxy Breathing Particle Shimmer */}
+              {isResonance && !isGravityCore && !isKeystone && !isGhost && (
+                <div className="relative flex items-center justify-center w-full h-full pointer-events-none">
+                  {/* Cosmic nebula breathing pulse */}
+                  <div className="absolute w-3.5 h-3.5 rounded-full bg-gradient-to-r from-purple-400/40 via-pink-400/30 to-amber-300/40 blur-[2px] animate-pulse" />
+                  {/* Starlight golden shimmer */}
+                  <Sparkles
+                    className="text-amber-200 drop-shadow-[0_0_8px_rgba(251,191,36,0.95)] animate-pulse"
+                    style={{
+                      width: Math.max(13, cellSize * 0.55),
+                      height: Math.max(13, cellSize * 0.55),
                     }}
                   />
                 </div>
