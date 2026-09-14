@@ -4,7 +4,6 @@ import {
   Piece,
   PreviewPlacement,
   EliminationPreview,
-  EliminationToast,
   PlacedPieceEntity,
   SingularityCrossPreviewState,
 } from '../types';
@@ -20,7 +19,6 @@ interface BoardProps {
   activeDragPiece?: Piece | null;
   previewPlacement: PreviewPlacement | null;
   simulatedClears?: EliminationPreview | null;
-  eliminationToast?: EliminationToast | null;
   onPlacePiece: (row: number, col: number) => void;
   onCellHover?: (pos: { row: number; col: number } | null) => void;
   clearingRows: number[];
@@ -42,7 +40,6 @@ export const Board: React.FC<BoardProps> = ({
   activeDragPiece,
   previewPlacement,
   simulatedClears,
-  eliminationToast,
   onPlacePiece,
   onCellHover,
   clearingRows,
@@ -73,23 +70,6 @@ export const Board: React.FC<BoardProps> = ({
       className="relative flex flex-col items-center select-none"
       onMouseLeave={() => onCellHover?.(null)}
     >
-      {/* Elimination Toast Banner (Floats gently without shifting board layout) */}
-      {eliminationToast && (
-        <div
-          id="elimination-toast"
-          key={eliminationToast.id}
-          className="absolute -top-11 left-1/2 -translate-x-1/2 z-30 pointer-events-none flex items-center gap-2 px-4 py-1.5 rounded-full bg-slate-900/95 border border-amber-400/70 shadow-xl shadow-amber-500/20 backdrop-blur-xs transition-opacity duration-200"
-        >
-          <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-          <span className="text-amber-300 font-bold text-xs sm:text-sm tracking-wide">
-            {eliminationToast.title}
-          </span>
-          <span className="text-emerald-400 font-extrabold text-xs sm:text-sm">
-            +{eliminationToast.scoreBonus}
-          </span>
-        </div>
-      )}
-
       {/* Adaptive outer frame: hugs the playable 10x10 grid dynamically with zero dead margins */}
       <div
         id="game-board-frame"
@@ -218,24 +198,24 @@ export const Board: React.FC<BoardProps> = ({
 
                 return (
                   <div key={`shockwave-${idx}-${sc.row}-${sc.col}`} className="absolute" style={{ top, left, width, height }}>
-                    {/* Expanding shockwave burst */}
-                    <div className="absolute inset-0 rounded-2xl border-2 border-cyan-400 bg-cyan-500/25 shadow-[0_0_35px_rgba(6,182,212,0.95)] animate-ping" />
-                    {/* 5x5 Shatter Highlight Aura */}
-                    <div className="absolute inset-0 rounded-2xl border-2 border-cyan-300 ring-2 ring-cyan-500/80 bg-cyan-950/40 backdrop-brightness-125 shadow-[0_0_25px_rgba(6,182,212,0.8)] animate-pulse" />
+                    {/* Expanding shockwave burst - GPU 纯边框加速 */}
+                    <div className="absolute inset-0 rounded-xl border-2 border-cyan-400/90 bg-cyan-500/20 shadow-[0_0_12px_rgba(6,182,212,0.7)] animate-ping" />
+                    {/* 5x5 Shatter Highlight Aura - 彻底剔除 backdrop-filter */}
+                    <div className="absolute inset-0 rounded-xl border border-cyan-300 ring-1 ring-cyan-400/80 bg-cyan-950/60 shadow-[0_0_10px_rgba(6,182,212,0.5)] animate-pulse" />
                   </div>
                 );
               })}
             </div>
           )}
 
-          {/* 2.6 Global Gravity Shockwave Wavefront */}
+          {/* 2.6 Global Gravity Shockwave Wavefront - 轻量化 GPU 光波 */}
           {isGlobalGravityPulseActive && (
             <div
               id="gravity-shockwave"
               className="absolute inset-0 pointer-events-none z-25 flex items-center justify-center overflow-hidden"
             >
-              <div className="w-full h-full rounded-xl border-4 border-cyan-400/90 shadow-[0_0_40px_rgba(6,182,212,0.9)] animate-ping opacity-90" />
-              <div className="absolute w-48 h-48 rounded-full bg-cyan-500/30 blur-2xl animate-pulse" />
+              <div className="w-full h-full rounded-lg border-2 border-cyan-400/90 shadow-[0_0_16px_rgba(6,182,212,0.8)] animate-ping opacity-85" />
+              <div className="absolute w-44 h-44 rounded-full bg-radial from-cyan-400/30 via-cyan-500/10 to-transparent opacity-80 animate-pulse" />
             </div>
           )}
 
@@ -286,12 +266,12 @@ export const Board: React.FC<BoardProps> = ({
               id="singularity-crosshair-hud"
               className="absolute inset-0 pointer-events-none z-24 overflow-hidden"
             >
-              {/* Layer 20: 目标方块晶格消解态预览 (Annihilation Glitch Preview) */}
+              {/* Layer 20: 目标方块晶格消解态预览 (iOS Safari GPU 硬件加速轻量化优化) */}
               {singularityCrossPreview.isValidPlacement &&
                 singularityCrossPreview.targetedBlockCoords.map((coord) => (
                   <div
                     key={`annihilate-${coord.row}-${coord.col}`}
-                    className="absolute box-border rounded-xs border border-amber-300/80 bg-amber-200/35 backdrop-brightness-150 animate-pulse flex items-center justify-center overflow-hidden"
+                    className="absolute box-border rounded-xs border border-amber-300/90 bg-amber-400/30 flex items-center justify-center overflow-hidden pointer-events-none transition-opacity duration-75"
                     style={{
                       top: `${coord.row * cellPixelSize}px`,
                       left: `${coord.col * cellPixelSize}px`,
@@ -299,8 +279,8 @@ export const Board: React.FC<BoardProps> = ({
                       height: `${cellPixelSize}px`,
                     }}
                   >
-                    {/* 微型激光消解光斑 */}
-                    <div className="w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_6px_#fef08a] animate-ping" />
+                    {/* 静态高亮激光消解十字点，彻底移除导致 WebKit 崩溃掉帧的 backdrop-filter 与嵌套 animate-ping */}
+                    <div className="w-1.5 h-1.5 rounded-full bg-amber-100 ring-1 ring-amber-300 shadow-[0_0_4px_#fde047]" />
                   </div>
                 ))}
 

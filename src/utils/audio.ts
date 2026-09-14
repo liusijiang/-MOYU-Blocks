@@ -558,6 +558,7 @@ class SoundEngine {
   private hasUnlockedAudio: boolean = false;
   private lastAimTickTime: number = 0;
   private lastLockAlertTime: number = 0;
+  private lastThudTime: number = 0;
 
   constructor() {
     // 默认配置
@@ -773,7 +774,9 @@ class SoundEngine {
     osc.frequency.setValueAtTime(cfg.freqStart, now);
     osc.frequency.exponentialRampToValueAtTime(cfg.freqEnd, now + cfg.duration);
 
-    gain.gain.setValueAtTime(cfg.gain, now);
+    // 4ms 线性防爆音启动包络
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(cfg.gain, now + 0.004);
     gain.gain.exponentialRampToValueAtTime(0.001, now + cfg.duration);
 
     osc.connect(gain);
@@ -793,16 +796,26 @@ class SoundEngine {
     const cfg = DEBRIS_AUDIO_CONFIG.falling;
 
     const osc = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
     const gain = ctx.createGain();
+
+    // 柔化音色：采用锯齿波叠加 1200Hz 低通滤波，塑造空气动力学呼啸感，彻底剔除尖锐破音与手机扬声器互调失真
     osc.type = 'sawtooth';
     osc.frequency.setValueAtTime(cfg.freqStart, now);
     osc.frequency.exponentialRampToValueAtTime(cfg.freqEnd, now + dropDurationSeconds);
 
-    gain.gain.setValueAtTime(0.001, now);
-    gain.gain.linearRampToValueAtTime(cfg.gain, now + dropDurationSeconds * 0.4);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + dropDurationSeconds);
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(1200, now);
+    filter.frequency.exponentialRampToValueAtTime(450, now + dropDurationSeconds);
+    filter.Q.setValueAtTime(1.5, now);
 
-    osc.connect(gain);
+    // 5ms 线性微淡入防爆音包络
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(cfg.gain, now + Math.min(0.04, dropDurationSeconds * 0.3));
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + dropDurationSeconds);
+
+    osc.connect(filter);
+    filter.connect(gain);
     this.connectToSFX(gain);
     osc.start(now);
     osc.stop(now + dropDurationSeconds);
@@ -828,7 +841,9 @@ class SoundEngine {
     osc.frequency.setValueAtTime(landingFreq, now);
     osc.frequency.exponentialRampToValueAtTime(42, now + cfg.duration);
 
-    gain.gain.setValueAtTime(volume, now);
+    // 5ms 线性微爬升防爆音包络，消除狄拉克冲激跳变
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(volume, now + 0.005);
     gain.gain.exponentialRampToValueAtTime(0.001, now + cfg.duration);
 
     osc.connect(gain);
@@ -977,7 +992,9 @@ class SoundEngine {
     osc.frequency.setValueAtTime(140, now);
     osc.frequency.exponentialRampToValueAtTime(45, now + 0.4);
 
-    gain.gain.setValueAtTime(0.2, now);
+    // 6ms 线性防爆音启动包络
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.2, now + 0.006);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
 
     osc.connect(gain);
@@ -1003,7 +1020,9 @@ class SoundEngine {
     osc.frequency.setValueAtTime(320, now);
     osc.frequency.exponentialRampToValueAtTime(55, now + 0.28);
 
-    gain.gain.setValueAtTime(0.2, now);
+    // 5ms 线性防爆音启动包络
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.2, now + 0.005);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
 
     osc.connect(gain);
@@ -1031,7 +1050,9 @@ class SoundEngine {
     osc.frequency.setValueAtTime(1800, now);
     osc.frequency.exponentialRampToValueAtTime(85, now + 0.22);
 
-    gain.gain.setValueAtTime(0.25, now);
+    // 4ms 线性防爆音平滑爬升
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.25, now + 0.004);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
 
     osc.connect(gain);
@@ -1046,7 +1067,8 @@ class SoundEngine {
     subOsc.frequency.setValueAtTime(80, now);
     subOsc.frequency.exponentialRampToValueAtTime(35, now + 0.38);
 
-    subGain.gain.setValueAtTime(0.3, now);
+    subGain.gain.setValueAtTime(0.0001, now);
+    subGain.gain.linearRampToValueAtTime(0.3, now + 0.005);
     subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
 
     subOsc.connect(subGain);
@@ -1070,7 +1092,8 @@ class SoundEngine {
     osc.frequency.setValueAtTime(95, now);
     osc.frequency.exponentialRampToValueAtTime(30, now + 0.45);
 
-    gain.gain.setValueAtTime(0.24, now);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.24, now + 0.005);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.48);
 
     osc.connect(gain);
@@ -1080,7 +1103,7 @@ class SoundEngine {
   }
 
   /**
-   * 11. 结构厚重撞击钝响
+   * 11. 结构厚重撞击钝响 (引入 60ms 硬件并发节流与 5ms 抗爆音微淡入)
    */
   public playStructuralThudSound(totalFallenBlocks: number = 4, col: number = 4.5) {
     if (this.preferences.sfxMuted) return;
@@ -1088,14 +1111,20 @@ class SoundEngine {
     if (!ctx) return;
     const now = ctx.currentTime;
 
+    // 60ms 硬件并发节流，防止大范围雪崩多个碎块同帧触发导致总线饱和削波
+    if (now - this.lastThudTime < 0.06) return;
+    this.lastThudTime = now;
+
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = 'sine';
-    const volume = Math.min(0.25, 0.12 + totalFallenBlocks * 0.015);
+    const volume = Math.min(0.22, 0.10 + totalFallenBlocks * 0.012);
     osc.frequency.setValueAtTime(90, now);
     osc.frequency.exponentialRampToValueAtTime(35, now + 0.26);
 
-    gain.gain.setValueAtTime(volume, now);
+    // 5ms 抗爆音微淡入包络
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(volume, now + 0.005);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
 
     osc.connect(gain);

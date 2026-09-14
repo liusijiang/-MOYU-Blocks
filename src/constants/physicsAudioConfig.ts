@@ -170,26 +170,26 @@ export const DEBRIS_AUDIO_CONFIG: DebrisAudioConfig = {
 export const GRAVITY_KINETICS_CONFIG: GravityKineticsConfig = {
   // 自由落体加速曲线：初速度为 0，受重力加速度强烈向下俯冲
   easingCurve: 'cubic-bezier(0.55, 0.055, 0.675, 0.19)',
-  // 消除残影退去后的悬空蓄力停滞期 (110ms)
-  anticipationHangTimeMs: 110,
-  // 触底落稳微休止 (80ms)
-  settlePauseMs: 80,
+  // 敏捷化悬空蓄力停滞期 (110ms -> 65ms)
+  anticipationHangTimeMs: 65,
+  // 紧凑落稳休止 (80ms -> 45ms)
+  settlePauseMs: 45,
   // 安全级联递归上限 (10次)
   maxCascadeDepth: 10,
 
   squash: {
     enabled: true,
-    durationMs: 80,
+    durationMs: 60,
     scaleY: 0.96,
   },
 
   durations: {
-    dist1: 180,
-    dist2: 220,
-    dist3to4: 270,
-    dist5PlusBase: 270,
-    dist5PlusStepPerCell: 25,
-    maxDuration: 360,
+    dist1: 140,
+    dist2: 170,
+    dist3to4: 210,
+    dist5PlusBase: 210,
+    dist5PlusStepPerCell: 18,
+    maxDuration: 280,
   },
 };
 

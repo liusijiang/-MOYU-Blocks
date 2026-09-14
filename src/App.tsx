@@ -573,22 +573,22 @@ export default function App() {
             totalLines,
           });
 
-          // Automatically dismiss toast after 2 seconds
+          // Automatically dismiss toast after 950ms (紧凑化消除战报展示)
           if (toastTimeoutRef.current) {
             clearTimeout(toastTimeoutRef.current);
           }
           toastTimeoutRef.current = setTimeout(() => {
             setEliminationToast(null);
-          }, 2000);
+          }, 950);
 
-          // Line elimination flash (220ms)
+          // Line elimination flash (紧凑化至 150ms，提升消除打击感)
           setClearingRows(clearedRows);
           setClearingCols(clearedCols);
           if (hasShatterShockwave) {
             setShatterShockwaveCenters(shatterCenters);
           }
 
-          await sleep(220);
+          await sleep(150);
 
           setClearingRows([]);
           setClearingCols([]);
@@ -718,7 +718,7 @@ export default function App() {
               if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
               toastTimeoutRef.current = setTimeout(() => {
                 setEliminationToast(null);
-              }, 3000);
+              }, 1200);
             }
           }
         }
@@ -786,6 +786,12 @@ export default function App() {
     isTouch: boolean
   ) => {
     if (gameOver || isCascading) return;
+
+    // 任务 021/022: 操作即刻打断机制，玩家开始交互即刻清理悬浮 Toast，保持视线纯净
+    if (eliminationToast) {
+      if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+      setEliminationToast(null);
+    }
 
     // Piece dimensions in 1:1 board cell size
     const pieceWidth = piece.shape[0].length * cellPixelSize;
@@ -1148,7 +1154,6 @@ export default function App() {
           activeDragPiece={activeDrag?.piece ?? null}
           previewPlacement={previewPlacement}
           simulatedClears={simulatedClears}
-          eliminationToast={eliminationToast}
           onPlacePiece={handleBoardCellClick}
           onCellHover={handleBoardHover}
           clearingRows={clearingRows}
@@ -1209,11 +1214,11 @@ export default function App() {
         )}
       </main>
 
-      {/* Bottom Pieces Tray (Instant Continuous Refill) */}
-      <footer className="w-full flex flex-col items-center mt-0.5">
+      {/* Bottom Pieces Tray & Tactical Status HUD in Safe Buffer Zone */}
+      <footer className="w-full flex flex-col items-center mt-0.5 relative">
         <div className="text-[10px] sm:text-xs text-slate-400 mb-0.5 text-center font-medium">
           {isCascading
-            ? '重力连锁结算中...'
+            ? '⚡ 重力连锁级联结算中...'
             : activeDrag
             ? '拖动至棋盘松开放置'
             : selectedPiece
@@ -1223,14 +1228,47 @@ export default function App() {
         <PieceTray
           pieces={pieces}
           selectedPiece={selectedPiece}
-          onSelectPiece={(_p, slotIndex) =>
-            setSelectedSlotIndex((prev) => (prev === slotIndex ? null : slotIndex))
-          }
+          onSelectPiece={(_p, slotIndex) => {
+            if (eliminationToast) {
+              if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+              setEliminationToast(null);
+            }
+            setSelectedSlotIndex((prev) => (prev === slotIndex ? null : slotIndex));
+          }}
           onPointerStartDrag={handlePointerStartDrag}
           board={board}
           activeDragSlotIndex={activeDrag?.slotIndex ?? null}
           disabled={isCascading}
         />
+
+        {/* 🌟 任务 021/022 核心重构：底部黄金空白区战术战报态势 HUD (Tactical Status HUD) */}
+        <div
+          id="tactical-status-hud-zone"
+          className="w-full flex items-center justify-center min-h-[36px] sm:min-h-[44px] mt-2 px-4 pointer-events-none"
+        >
+          {eliminationToast ? (
+            <div
+              id="elimination-toast-bottom"
+              key={eliminationToast.id}
+              className="flex items-center gap-2 px-4 py-1.5 rounded-full bg-slate-900/95 border border-amber-400/80 shadow-lg shadow-amber-500/20 animate-fade-in transition-all duration-200 pointer-events-auto"
+            >
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+              <span className="text-amber-300 font-bold text-xs sm:text-sm tracking-wide">
+                {eliminationToast.title}
+              </span>
+              {eliminationToast.scoreBonus > 0 && (
+                <span className="text-emerald-400 font-extrabold text-xs sm:text-sm">
+                  +{eliminationToast.scoreBonus}
+                </span>
+              )}
+            </div>
+          ) : isCascading ? (
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-cyan-950/60 border border-cyan-500/40 text-cyan-300 text-[11px] font-medium animate-pulse">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping" />
+              ⚡ 重力级联演进中...
+            </div>
+          ) : null}
+        </div>
       </footer>
 
       {/* High performance 120fps hardware-accelerated drag overlay */}
