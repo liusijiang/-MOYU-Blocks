@@ -90,10 +90,10 @@ export const Board: React.FC<BoardProps> = ({
         </div>
       )}
 
-      {/* Rigid outer frame: guarantees stillness, perfectly centers playable grid */}
+      {/* Adaptive outer frame: hugs the playable 10x10 grid dynamically with zero dead margins */}
       <div
         id="game-board-frame"
-        className={`w-[320px] h-[320px] sm:w-[380px] sm:h-[380px] md:w-[410px] md:h-[410px] p-2 sm:p-2.5 bg-slate-900/95 rounded-2xl shadow-2xl transition-all duration-300 box-border flex items-center justify-center overflow-hidden ${
+        className={`w-fit h-fit p-1.5 sm:p-2.5 bg-slate-900/95 rounded-xl sm:rounded-2xl shadow-2xl transition-all duration-300 box-border flex items-center justify-center overflow-hidden ${
           isFeverMode
             ? 'border-2 border-amber-400/90 ring-4 ring-amber-500/30 shadow-[0_0_25px_rgba(245,158,11,0.4)]'
             : 'border-2 border-slate-700/80'

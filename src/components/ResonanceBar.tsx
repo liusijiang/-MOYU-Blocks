@@ -12,7 +12,7 @@ export const ResonanceBar: React.FC<ResonanceBarProps> = ({ energy, isFull }) =>
   return (
     <div
       id="gravity-resonance-container"
-      className="w-full max-w-md px-4 mt-2 mb-1 flex flex-col gap-1 select-none"
+      className="w-full max-w-[340px] sm:max-w-md px-2 mt-1 mb-0.5 flex flex-col gap-0.5 select-none"
     >
       {/* Upper Micro Status Line */}
       <div className="flex items-center justify-between text-[11px] font-medium tracking-tight">

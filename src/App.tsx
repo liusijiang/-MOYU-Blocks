@@ -56,6 +56,7 @@ import {
   User,
   LogIn,
   CloudCheck,
+  Crown,
 } from 'lucide-react';
 import { sound } from './utils/audio';
 import {
@@ -176,19 +177,43 @@ export default function App() {
   // Board reference for geometry raycasting
   const boardRef = useRef<HTMLDivElement | null>(null);
 
-  // Responsive discrete cell pixel size (30px on mobile, 36px on sm, 39px on md)
-  const [cellPixelSize, setCellPixelSize] = useState<number>(36);
+  // Responsive discrete cell pixel size (24px ~ 30px on mobile In-App WebViews, 36px on sm, 39px on md/desktop)
+  const [cellPixelSize, setCellPixelSize] = useState<number>(30);
 
   useEffect(() => {
     const updateCellSize = () => {
       const winW = window.innerWidth;
-      if (winW >= 768) {
+      const winH = window.innerHeight;
+
+      // 1. 宽屏 / 桌面 / 平板（且纵向空间充足）
+      if (winW >= 768 && winH >= 760) {
         setCellPixelSize(39);
-      } else if (winW >= 640) {
-        setCellPixelSize(36);
-      } else {
-        setCellPixelSize(30);
+        return;
       }
+      if (winW >= 640 && winH >= 660) {
+        setCellPixelSize(36);
+        return;
+      }
+
+      // 2. 移动端与 In-App WebView（微信/QQ/小红书/抖音等内置视口）
+      // 水平方向最大可用尺寸（留出两侧 padding）
+      const maxAllowedByWidth = Math.floor((winW - 20) / 10);
+
+      // 垂直高度自适应预算，确保在不同宿主视口下底部均有 130px ~ 200px 的健康留白
+      let maxAllowedByHeight = 30;
+      if (winH < 540) {
+        // 极矮屏（如带三大物理金刚键或聊天窗口顶底双栏）：单元格 24px（棋盘 240px，总高约 370px）
+        maxAllowedByHeight = 24;
+      } else if (winH < 620) {
+        // 典型微信内置视口（~600px）：单元格 26px（棋盘 260px，总高约 400px，留白 200px）
+        maxAllowedByHeight = 26;
+      } else if (winH < 720) {
+        // 中度视口：单元格 28px
+        maxAllowedByHeight = 28;
+      }
+
+      const finalSize = Math.min(maxAllowedByWidth, maxAllowedByHeight, 30);
+      setCellPixelSize(Math.max(22, finalSize));
     };
 
     updateCellSize();
@@ -971,47 +996,46 @@ export default function App() {
   return (
     <div
       id="game-root"
-      className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-between p-3 sm:p-6 select-none overflow-hidden"
+      className="h-[100dvh] max-h-[100dvh] w-full bg-slate-950 text-slate-100 flex flex-col items-center justify-start pt-1 pb-[env(safe-area-inset-bottom,16px)] px-2 sm:px-4 select-none overflow-hidden touch-none"
     >
-      {/* Top Header / Score Bar */}
-      <header className="w-full max-w-md flex flex-col gap-2.5">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="flex items-center space-x-2">
-              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white">
-                摸鱼方块
-              </h1>
-              {isCloudSynced && (
-                <span
-                  title="对局进度已自动同步至云端"
-                  className="flex items-center space-x-0.5 text-[10px] text-emerald-400 font-medium px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 animate-fade-in"
-                >
-                  <CloudCheck className="w-3 h-3" />
-                  <span>已存档</span>
-                </span>
-              )}
-            </div>
+      {/* Top Header / Score & Rank Micro Bar */}
+      <header className="w-full max-w-[340px] sm:max-w-md flex flex-col gap-1.5 z-20">
+        {/* Row 1: Title & Action Controls */}
+        <div className="flex items-center justify-between h-[28px]">
+          <div className="flex items-center space-x-1.5">
+            <h1 className="text-base sm:text-lg font-bold tracking-tight text-white">
+              摸鱼方块
+            </h1>
+            {isCloudSynced && (
+              <span
+                title="对局进度已自动同步至云端"
+                className="flex items-center space-x-0.5 text-[9px] text-emerald-400 font-medium px-1 py-0.2 rounded bg-emerald-500/10 border border-emerald-500/20"
+              >
+                <CloudCheck className="w-2.5 h-2.5" />
+                <span className="hidden xs:inline">云</span>
+              </span>
+            )}
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2">
+          <div className="flex items-center gap-1 sm:gap-1.5">
             {/* 用户登录 / 个人中心按钮 */}
             <button
               id="user-auth-btn"
               type="button"
               onClick={() => setIsAuthModalOpen(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition cursor-pointer"
+              className="h-7 px-2 rounded-lg bg-slate-850 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition cursor-pointer flex items-center gap-1"
               title={currentUser ? `已登录: ${currentUser.username}` : '登录 / 注册'}
             >
               {currentUser ? (
                 <>
-                  <User className="w-4 h-4 text-emerald-400" />
-                  <span className="max-w-[70px] truncate text-emerald-300 font-semibold">
+                  <User className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="max-w-[48px] sm:max-w-[64px] truncate text-emerald-300 font-medium">
                     {currentUser.username}
                   </span>
                 </>
               ) : (
                 <>
-                  <LogIn className="w-4 h-4 text-amber-400" />
+                  <LogIn className="w-3.5 h-3.5 text-amber-400" />
                   <span className="text-amber-300">登录</span>
                 </>
               )}
@@ -1025,14 +1049,14 @@ export default function App() {
                 setIsMuted(next);
                 setAudioPreferences(sound.getPreferences());
               }}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs sm:text-sm font-medium transition cursor-pointer"
+              className="w-7 h-7 rounded-lg bg-slate-850 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center justify-center transition cursor-pointer"
               title={isMuted ? '开启声音' : '一键静音'}
               aria-label={isMuted ? '开启声音' : '一键静音'}
             >
               {isMuted ? (
-                <VolumeX className="w-4 h-4 text-slate-400" />
+                <VolumeX className="w-3.5 h-3.5 text-slate-400" />
               ) : (
-                <Volume2 className="w-4 h-4 text-emerald-400" />
+                <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
               )}
             </button>
 
@@ -1041,11 +1065,11 @@ export default function App() {
               id="audio-settings-btn"
               type="button"
               onClick={() => setIsAudioModalOpen(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 text-xs sm:text-sm font-medium transition cursor-pointer relative"
+              className="w-7 h-7 rounded-lg bg-slate-850 hover:bg-slate-700 text-cyan-300 border border-slate-700 flex items-center justify-center transition cursor-pointer relative"
               title="自适应音乐与音频设置"
               aria-label="自适应音乐与音频设置"
             >
-              <Sliders className="w-4 h-4 text-cyan-400" />
+              <Sliders className="w-3.5 h-3.5 text-cyan-400" />
               {!audioPreferences.bgmMuted && (
                 <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping absolute top-1 right-1" />
               )}
@@ -1055,58 +1079,67 @@ export default function App() {
               id="restart-btn"
               type="button"
               onClick={handleRestart}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs sm:text-sm font-medium transition cursor-pointer"
+              className="w-7 h-7 rounded-lg bg-slate-850 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center justify-center transition cursor-pointer"
               title="重新开始"
             >
-              <RotateCcw className="w-4 h-4" />
-              <span>重置</span>
+              <RotateCcw className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
 
-        {/* Score Counters */}
-        <div className="grid grid-cols-2 gap-3">
-          <div className="flex items-center justify-between px-3.5 py-2 bg-slate-900/90 rounded-xl border border-slate-800">
-            <span className="text-xs text-slate-400 font-medium">当前得分</span>
-            <span id="current-score" className="text-lg font-bold text-emerald-400">
+        {/* Row 2: Score Counters & Realtime Rank Status (3-capsule row) */}
+        <div className="grid grid-cols-3 gap-1.5 text-xs h-[26px]">
+          <div className="flex items-center justify-between px-2 bg-slate-900/90 rounded-lg border border-slate-800">
+            <span className="text-[10px] text-slate-400 font-medium">得分</span>
+            <span id="current-score" className="text-xs sm:text-sm font-bold text-emerald-400 font-mono">
               {score}
             </span>
           </div>
 
           <div
             onClick={() => setIsLeaderboardModalOpen(true)}
-            className="flex items-center justify-between px-3.5 py-2 bg-slate-900/90 hover:bg-slate-850 hover:border-amber-500/40 rounded-xl border border-slate-800 cursor-pointer transition-colors"
+            className="flex items-center justify-between px-2 bg-slate-900/90 hover:bg-slate-850 hover:border-amber-500/40 rounded-lg border border-slate-800 cursor-pointer transition-colors"
             title="点击查看全服排行榜"
           >
-            <div className="flex items-center gap-1 text-xs text-slate-400 font-medium">
-              <Trophy className="w-3.5 h-3.5 text-amber-400" />
-              <span>最高纪录</span>
+            <div className="flex items-center gap-0.5 text-[10px] text-slate-400 font-medium">
+              <Trophy className="w-3 h-3 text-amber-400" />
+              <span>最高</span>
             </div>
-            <span id="best-score" className="text-lg font-bold text-amber-400">
+            <span id="best-score" className="text-xs sm:text-sm font-bold text-amber-400 font-mono">
               {bestScore}
             </span>
           </div>
-        </div>
 
-        {/* 任务 007: 实时全服差距看板 */}
-        <RankStatusBar
-          score={score}
-          rankContext={rankContext}
-          onOpenLeaderboard={() => setIsLeaderboardModalOpen(true)}
-          username={currentUser?.username}
-        />
+          <div
+            onClick={() => setIsLeaderboardModalOpen(true)}
+            className="flex items-center justify-between px-1.5 bg-slate-900/90 hover:bg-slate-850 hover:border-indigo-500/40 rounded-lg border border-slate-800 cursor-pointer transition-colors"
+            title="点击查看全服排行榜与差距"
+          >
+            <div className="flex items-center gap-0.5 text-[10px] text-slate-400 font-medium">
+              <Crown className="w-3 h-3 text-indigo-400" />
+              <span className="font-bold text-indigo-300">
+                #{rankContext?.currentRank ?? 1}
+              </span>
+            </div>
+            <span className="text-[10px] text-slate-400 truncate max-w-[48px] font-mono">
+              {(rankContext?.deltaToHigher ?? 0) > 0 ? `-${rankContext?.deltaToHigher}` : '登顶'}
+            </span>
+          </div>
+        </div>
       </header>
 
-      {/* Main Board Area (Strictly stabilized & pinned) */}
-      <main className="relative my-auto flex flex-col items-center justify-center">
-        {/* 任务 010: 跨步连击与狂热状态浮动徽标 */}
-        <div className="mb-2 min-h-[28px] flex items-center justify-center z-20">
-          <ComboBadge
-            streakCount={streakCount}
-            comboShield={comboShield}
-            isCascading={isCascading}
-          />
-        </div>
+      {/* Main Board Area (Tightened with Floating HUD) */}
+      <main className="relative mt-1 mb-0.5 flex flex-col items-center justify-center">
+        {/* 任务 010: 跨步连击与狂热状态浮动徽标 (绝对定位挂载, 连击时浮现, 0 静态占用) */}
+        {streakCount > 0 && (
+          <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 z-30 pointer-events-none animate-fade-in whitespace-nowrap">
+            <ComboBadge
+              streakCount={streakCount}
+              comboShield={comboShield}
+              isCascading={isCascading}
+            />
+          </div>
+        )}
 
         <Board
           board={board}
@@ -1177,14 +1210,14 @@ export default function App() {
       </main>
 
       {/* Bottom Pieces Tray (Instant Continuous Refill) */}
-      <footer className="w-full flex flex-col items-center">
-        <div className="text-xs text-slate-400 mb-1 text-center font-medium">
+      <footer className="w-full flex flex-col items-center mt-0.5">
+        <div className="text-[10px] sm:text-xs text-slate-400 mb-0.5 text-center font-medium">
           {isCascading
             ? '重力连锁结算中...'
             : activeDrag
-            ? '拖动至棋盘空白处松开放置'
+            ? '拖动至棋盘松开放置'
             : selectedPiece
-            ? '已选中积木，点击棋盘空白处放置'
+            ? '已选中积木，点击棋盘空白放置'
             : '按住拖动或点击选择积木'}
         </div>
         <PieceTray
