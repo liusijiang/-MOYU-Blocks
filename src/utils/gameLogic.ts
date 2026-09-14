@@ -4,6 +4,7 @@ import {
   CellBorderInfo,
   EliminationPreview,
   PlacedPieceEntity,
+  SingularityCrossPreviewState,
 } from '../types';
 import {
   GRAVITY_BLOCK_COLOR,
@@ -405,6 +406,236 @@ export function splitAndTrimCutEntities(
   }
 
   return { remainingEntities, newlyCreatedDebrisIds };
+}
+
+/**
+ * 任务 013/014: 计算引力奇点落盘时的十字贯穿爆破行列与受波及单元格
+ * @param centerRow 奇点落盘行号 (0-9)
+ * @param centerCol 奇点落盘列号 (0-9)
+ */
+export function calculateSingularityCrossBlast(
+  centerRow: number,
+  centerCol: number
+): {
+  blastRows: number[];
+  blastCols: number[];
+  impactCells: Array<{ r: number; c: number }>;
+} {
+  const safeR = Math.max(0, Math.min(BOARD_SIZE - 1, centerRow));
+  const safeC = Math.max(0, Math.min(BOARD_SIZE - 1, centerCol));
+  const blastRows = [safeR];
+  const blastCols = [safeC];
+  const impactCells: Array<{ r: number; c: number }> = [];
+
+  // 十字共 19 个格子的打击坐标
+  for (let c = 0; c < BOARD_SIZE; c++) {
+    impactCells.push({ r: safeR, c });
+  }
+  for (let r = 0; r < BOARD_SIZE; r++) {
+    if (r !== safeR) {
+      impactCells.push({ r, c: safeC });
+    }
+  }
+
+  return { blastRows, blastCols, impactCells };
+}
+
+/**
+ * 任务 016: 计算引力奇点动态十字瞄准预览状态
+ * 无论玩家从哪个像素拖拽积木，发射中心均严格、确定地固化在积木的星核晶元单元格上
+ */
+export function computeSingularityCrosshairPreview(
+  board: BoardState,
+  piece: Piece,
+  targetRow: number,
+  targetCol: number,
+  placedPieces: PlacedPieceEntity[],
+  isValidPlacement: boolean
+): SingularityCrossPreviewState {
+  const corePos = findBottomMostCellInPiece(piece.shape);
+  const centerRow = Math.max(0, Math.min(BOARD_SIZE - 1, targetRow + corePos.r));
+  const centerCol = Math.max(0, Math.min(BOARD_SIZE - 1, targetCol + corePos.c));
+
+  const targetedBlockCoords: Array<{ row: number; col: number }> = [];
+
+  // 1. 扫描当前棋盘上被中心十字贯穿命中的既有方块（将被湮灭消解）
+  for (let c = 0; c < BOARD_SIZE; c++) {
+    if (board[centerRow][c] !== null) {
+      targetedBlockCoords.push({ row: centerRow, col: c });
+    }
+  }
+  for (let r = 0; r < BOARD_SIZE; r++) {
+    if (r !== centerRow && board[r][centerCol] !== null) {
+      targetedBlockCoords.push({ row: r, col: centerCol });
+    }
+  }
+
+  // 2. 检索当前棋盘上已被横向或纵向激光覆盖的 1x1 引力方块（触发 5x5 裂变预警）
+  const chainedGravityCores: Array<{ row: number; col: number; blastRange: number }> = [];
+  for (const p of placedPieces) {
+    if (p.isGravityBlock) {
+      if (p.startRow === centerRow || p.startCol === centerCol) {
+        chainedGravityCores.push({
+          row: p.startRow,
+          col: p.startCol,
+          blastRange: 5,
+        });
+      }
+    }
+  }
+
+  return {
+    centerRow,
+    centerCol,
+    isValidPlacement,
+    beamRow: centerRow,
+    beamCol: centerCol,
+    targetedBlockCoords,
+    chainedGravityCores,
+    estimatedLinesCleared: 2,
+  };
+}
+
+/**
+ * 任务 013/014: 基于牛顿结构支撑力的自底向上光线投射沉降算法
+ * 检测并驱动全场失去物理支撑的积木实体整体垂直下落，彻底消除反重力悬空现象，
+ * 同时严格保证自底向上就位，杜绝穿模与重叠。
+ */
+export function computeStructuralSupportDrops(
+  board: BoardState,
+  entities: PlacedPieceEntity[]
+): {
+  updatedEntities: PlacedPieceEntity[];
+  updatedBoard: BoardState;
+  fallingEntities: PlacedPieceEntity[];
+  entityDropMap: Map<string, number>;
+  hasMovement: boolean;
+  maxDistance: number;
+} {
+  const tempBoard: BoardState = board.map((row) => [...row]);
+  const entityDropMap = new Map<string, number>();
+
+  // 1. 先将所有待探测实体占用的单元格从 tempBoard 中擦除，避免自相碰撞
+  for (const entity of entities) {
+    for (let r = 0; r < entity.shape.length; r++) {
+      for (let c = 0; c < entity.shape[0].length; c++) {
+        if (entity.shape[r][c] === 1) {
+          const tr = entity.startRow + r;
+          const tc = entity.startCol + c;
+          if (tr >= 0 && tr < BOARD_SIZE && tc >= 0 && tc < BOARD_SIZE) {
+            tempBoard[tr][tc] = null;
+          }
+        }
+      }
+    }
+  }
+
+  // 2. 自底向上排序：最底层的实体优先判定落点与支撑面
+  const sortedEntities = [...entities].sort((a, b) => {
+    const bottomA = a.startRow + a.shape.length - 1;
+    const bottomB = b.startRow + b.shape.length - 1;
+    return bottomB - bottomA;
+  });
+
+  let hasMovement = false;
+  let maxDistance = 0;
+
+  // 3. 逐个实体向下进行光线投射探测最大可用自由落体距离
+  for (const entity of sortedEntities) {
+    let maxDrop = 0;
+
+    while (true) {
+      const nextDrop = maxDrop + 1;
+      let blocked = false;
+
+      for (let r = 0; r < entity.shape.length; r++) {
+        for (let c = 0; c < entity.shape[0].length; c++) {
+          if (entity.shape[r][c] === 1) {
+            const targetR = entity.startRow + r + nextDrop;
+            const targetC = entity.startCol + c;
+
+            // 触碰底界
+            if (targetR >= BOARD_SIZE) {
+              blocked = true;
+              break;
+            }
+
+            // 碰撞到已固定的其他积木或地基
+            if (tempBoard[targetR][targetC] !== null) {
+              blocked = true;
+              break;
+            }
+          }
+        }
+        if (blocked) break;
+      }
+
+      if (!blocked) {
+        maxDrop = nextDrop;
+      } else {
+        break; // 探测到支撑接触面，停止下探
+      }
+    }
+
+    if (maxDrop > 0) {
+      hasMovement = true;
+      maxDistance = Math.max(maxDistance, maxDrop);
+    }
+    entityDropMap.set(entity.id, maxDrop);
+
+    // 4. 将就位后的实体重新固化至 tempBoard，作为更高处实体的物理支撑面
+    const finalStartRow = entity.startRow + maxDrop;
+    for (let r = 0; r < entity.shape.length; r++) {
+      for (let c = 0; c < entity.shape[0].length; c++) {
+        if (entity.shape[r][c] === 1) {
+          const tr = finalStartRow + r;
+          const tc = entity.startCol + c;
+          if (tr >= 0 && tr < BOARD_SIZE && tc >= 0 && tc < BOARD_SIZE) {
+            tempBoard[tr][tc] = entity.color;
+          }
+        }
+      }
+    }
+  }
+
+  const updatedEntities = entities.map((entity) => {
+    const drop = entityDropMap.get(entity.id) || 0;
+    return {
+      ...entity,
+      startRow: entity.startRow + drop,
+      hasStructuralSupport: true,
+      dropOffset: drop,
+    };
+  });
+
+  const fallingEntities = updatedEntities.filter(
+    (e) => (entityDropMap.get(e.id) || 0) > 0
+  );
+
+  return {
+    updatedEntities,
+    updatedBoard: tempBoard,
+    fallingEntities,
+    entityDropMap,
+    hasMovement,
+    maxDistance,
+  };
+}
+
+/**
+ * 任务 013/014 统一重力动力学接口
+ */
+export function computeUnifiedGravityFall(
+  board: BoardState,
+  entities: PlacedPieceEntity[],
+  _isGlobalAvalancheUnlocked?: boolean
+): {
+  updatedEntities: PlacedPieceEntity[];
+  updatedBoard: BoardState;
+  hasMovement: boolean;
+  maxDistance: number;
+} {
+  return computeStructuralSupportDrops(board, entities);
 }
 
 /**

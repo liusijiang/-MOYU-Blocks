@@ -1,7 +1,7 @@
 import React from 'react';
 import { Piece } from '../types';
-import { getPieceCellBorders } from '../utils/gameLogic';
-import { Disc3, Sparkles } from 'lucide-react';
+import { getPieceCellBorders, findBottomMostCellInPiece } from '../utils/gameLogic';
+import { Disc3, Sparkles, Crosshair } from 'lucide-react';
 
 interface ConnectedPieceProps {
   piece: Piece;
@@ -29,10 +29,11 @@ export const ConnectedPiece: React.FC<ConnectedPieceProps> = ({
   const isGravityCore = Boolean(piece.isGravityBlock);
   const isKeystone = Boolean(piece.isKeystone);
   const isResonance = Boolean(piece.isResonancePiece);
+  const resonanceCorePos = isResonance ? findBottomMostCellInPiece(piece.shape) : null;
 
   const resonanceWrapperGlow =
     isResonance && !isGhost
-      ? 'drop-shadow-[0_0_12px_rgba(168,85,247,0.7)] drop-shadow-[0_0_5px_rgba(251,191,36,0.6)]'
+      ? 'drop-shadow-[0_0_14px_rgba(245,158,11,0.7)] drop-shadow-[0_0_8px_rgba(168,85,247,0.7)]'
       : '';
 
   return (
@@ -83,8 +84,14 @@ export const ConnectedPiece: React.FC<ConnectedPieceProps> = ({
             borderClasses = 'border-2 border-cyan-400 rounded-lg shadow-[0_0_16px_rgba(6,182,212,0.85)] ring-2 ring-cyan-300/70';
             bgClass = 'bg-gradient-to-br from-slate-950 via-cyan-950 to-teal-950';
           } else if (isResonance) {
-            borderClasses = 'border-2 border-purple-300 rounded-sm shadow-[0_0_12px_rgba(192,132,252,0.9)] ring-1 ring-amber-300/80';
-            bgClass = 'bg-gradient-to-br from-indigo-900 via-purple-900 to-amber-950';
+            const isCoreCell = resonanceCorePos?.r === r && resonanceCorePos?.c === c;
+            if (isCoreCell) {
+              borderClasses = 'border-2 border-amber-200 rounded-md shadow-[0_0_16px_rgba(251,191,36,1)] ring-2 ring-amber-300';
+              bgClass = 'bg-gradient-to-br from-amber-300 via-amber-400 to-yellow-100';
+            } else {
+              borderClasses = 'border-2 border-purple-400/80 rounded-sm shadow-[0_0_10px_rgba(168,85,247,0.8)] ring-1 ring-purple-300/40';
+              bgClass = 'bg-gradient-to-br from-indigo-950 via-purple-900 to-slate-900';
+            }
           }
 
           if (isGhost) {
@@ -144,19 +151,38 @@ export const ConnectedPiece: React.FC<ConnectedPieceProps> = ({
                 </div>
               )}
 
-              {/* Resonance Piece: Purple-Gold Galaxy Breathing Particle Shimmer */}
+              {/* Resonance Piece: Singularity Core Cell vs Outer Crystal Shimmer */}
               {isResonance && !isGravityCore && !isKeystone && !isGhost && (
                 <div className="relative flex items-center justify-center w-full h-full pointer-events-none">
-                  {/* Cosmic nebula breathing pulse */}
-                  <div className="absolute w-3.5 h-3.5 rounded-full bg-gradient-to-r from-purple-400/40 via-pink-400/30 to-amber-300/40 blur-[2px] animate-pulse" />
-                  {/* Starlight golden shimmer */}
-                  <Sparkles
-                    className="text-amber-200 drop-shadow-[0_0_8px_rgba(251,191,36,0.95)] animate-pulse"
-                    style={{
-                      width: Math.max(13, cellSize * 0.55),
-                      height: Math.max(13, cellSize * 0.55),
-                    }}
-                  />
+                  {resonanceCorePos?.r === r && resonanceCorePos?.c === c ? (
+                    // Singularity Core Launcher Reticle Cell
+                    <div className="relative flex items-center justify-center w-full h-full">
+                      <div
+                        className="absolute w-4 h-4 rounded-full bg-amber-300/60 blur-[2px] animate-ping"
+                        style={{ animationDuration: '2s' }}
+                      />
+                      <Crosshair
+                        className="text-amber-950 drop-shadow-[0_0_4px_rgba(255,255,255,0.9)] animate-spin"
+                        style={{
+                          width: Math.max(15, cellSize * 0.7),
+                          height: Math.max(15, cellSize * 0.7),
+                          animationDuration: '6s',
+                        }}
+                      />
+                    </div>
+                  ) : (
+                    // Cosmic nebula breathing pulse for other outer cells
+                    <>
+                      <div className="absolute w-3 h-3 rounded-full bg-purple-400/30 blur-[2px] animate-pulse" />
+                      <Sparkles
+                        className="text-purple-200 drop-shadow-[0_0_6px_rgba(192,132,252,0.8)] animate-pulse"
+                        style={{
+                          width: Math.max(12, cellSize * 0.5),
+                          height: Math.max(12, cellSize * 0.5),
+                        }}
+                      />
+                    </>
+                  )}
                 </div>
               )}
             </div>

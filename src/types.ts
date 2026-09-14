@@ -14,6 +14,8 @@ export interface Piece {
   isGravityBlock?: boolean;
   isResonancePiece?: boolean;  // 任务 010: 是否被引力共鸣星块赋能
   isKeystone?: boolean;        // 任务 010: 是否为 1x1 稀缺微晶基石
+  hasSingularityCore?: boolean; // 任务 016: 标记内部包含奇点发射星核
+  coreLocalPos?: { r: number; c: number }; // 任务 016: 星核在局部矩阵中的精确坐标
 }
 
 export interface CellBorderInfo {
@@ -66,6 +68,25 @@ export interface PlacedPieceEntity {
   shape: number[][];
   isDebris?: boolean;
   isGravityBlock?: boolean;
+  hasStructuralSupport?: boolean;
+  dropOffset?: number;
+  hasSingularityCore?: boolean;
+  coreLocalPos?: { r: number; c: number };
+}
+
+// ==========================================
+// 任务 016: 引力奇点十字贯穿动态瞄准预览状态接口
+// ==========================================
+
+export interface SingularityCrossPreviewState {
+  centerRow: number;
+  centerCol: number;
+  isValidPlacement: boolean;
+  beamRow: number;
+  beamCol: number;
+  targetedBlockCoords: Array<{ row: number; col: number }>;
+  chainedGravityCores: Array<{ row: number; col: number; blastRange: number }>;
+  estimatedLinesCleared: number;
 }
 
 // ==========================================
@@ -104,6 +125,27 @@ export interface CloudGameProgress {
   currentPieces: (Piece | null)[];
   isGameOver: boolean;
   updatedAt: string;
+}
+
+// 任务 018: 音频偏好与自适应 BGM 接口
+export interface AudioPreferences {
+  masterVolume: number;     // 0.0 ~ 1.0 (默认 1.0)
+  bgmVolume: number;        // 0.0 ~ 1.0 (默认 0.6)
+  sfxVolume: number;        // 0.0 ~ 1.0 (默认 0.8)
+  bgmMuted: boolean;        // 默认 false
+  sfxMuted: boolean;        // 默认 false
+  spatialPannerEnabled: boolean; // 空间声相开关 (默认 true)
+  reverbEnabled: boolean;   // 空间微混响开关 (默认 true)
+}
+
+export interface BGMRuntimeState {
+  isPlaying: boolean;
+  bpm: number;
+  currentChordIndex: number;
+  layer1PadGain: number;
+  layer2ArpGain: number;
+  layer3ShimmerGain: number;
+  layer4FeverGain: number;
 }
 
 

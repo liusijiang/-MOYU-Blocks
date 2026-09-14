@@ -1,11 +1,10 @@
 export const MEMFIRE_CONFIG = {
   url:
-    (typeof process !== 'undefined' && process.env?.FIRE_DB_URL) ||
+    (typeof process !== 'undefined' && (process.env?.FIRE_DB_URL || process.env?.VITE_FIRE_DB_URL)) ||
     'https://d4v5cc8g91htqli3veng.baseapi.memfiredb.com',
   anonKey:
-    (typeof process !== 'undefined' && process.env?.FIRE_DB_ANON) || '',
-  serviceRoleKey:
-    (typeof process !== 'undefined' && process.env?.FIRE_DB_SERV) || '',
+    (typeof process !== 'undefined' && (process.env?.FIRE_DB_ANON || process.env?.VITE_FIRE_DB_ANON)) ||
+    '',
   tablePrefix: '_block',
   tables: {
     users: '_block_users',

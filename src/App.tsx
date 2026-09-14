@@ -9,6 +9,9 @@ import {
   PlacedPieceEntity,
   UserProfile,
   ScoreRankContext,
+  SingularityCrossPreviewState,
+  AudioPreferences,
+  BGMRuntimeState,
 } from './types';
 import {
   createEmptyBoard,
@@ -19,6 +22,9 @@ import {
   getSimulatedClearLines,
   splitAndTrimCutEntities,
   computeGravityCascadeDrops,
+  calculateSingularityCrossBlast,
+  computeSingularityCrosshairPreview,
+  computeStructuralSupportDrops,
   checkAndSpawnGravityBlock,
   rebuildBoardFromEntities,
   getAdaptiveRandomPiece,
@@ -39,11 +45,14 @@ import { ResonanceBar } from './components/ResonanceBar';
 import { AuthModal } from './components/AuthModal';
 import { RankStatusBar } from './components/RankStatusBar';
 import { LeaderboardModal } from './components/LeaderboardModal';
+import { AudioSettingsModal } from './components/AudioSettingsModal';
 import {
   RotateCcw,
   Trophy,
   Volume2,
   VolumeX,
+  Sliders,
+  Music,
   User,
   LogIn,
   CloudCheck,
@@ -77,10 +86,21 @@ export default function App() {
   const [isCascading, setIsCascading] = useState<boolean>(false);
   const [isGlobalGravityPulseActive, setIsGlobalGravityPulseActive] = useState<boolean>(false);
   const [shatterShockwaveCenters, setShatterShockwaveCenters] = useState<Array<{ row: number; col: number }>>([]);
+  const [singularityBlastCenter, setSingularityBlastCenter] = useState<{ row: number; col: number } | null>(null);
+  const [singularityCrossPreview, setSingularityCrossPreview] = useState<SingularityCrossPreviewState | null>(null);
   const [fallDuration, setFallDuration] = useState<number>(240);
   const [isMuted, setIsMuted] = useState<boolean>(() => sound.getMuted());
   const [clearingRows, setClearingRows] = useState<number[]>([]);
   const [clearingCols, setClearingCols] = useState<number[]>([]);
+
+  // 任务 018: 自适应音频与多总线偏好状态
+  const [audioPreferences, setAudioPreferences] = useState<AudioPreferences>(() =>
+    sound.getPreferences()
+  );
+  const [isAudioModalOpen, setIsAudioModalOpen] = useState<boolean>(false);
+  const [bgmRuntime, setBgmRuntime] = useState<BGMRuntimeState>(() =>
+    sound.getBGMRuntimeState()
+  );
 
   // 任务 007: 用户系统与排行榜状态
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => getStoredUser());
@@ -97,6 +117,45 @@ export default function App() {
   const [keystoneCooldownSteps, setKeystoneCooldownSteps] = useState<number>(0);
   const [keystoneUsageCount, setKeystoneUsageCount] = useState<number>(0);
   const [recentShapes, setRecentShapes] = useState<string[]>([]);
+
+  // 监听浏览器用户手势以激活 AudioContext (Autoplay Policy)
+  useEffect(() => {
+    const handleFirstGesture = () => {
+      sound.resumeContext();
+    };
+    window.addEventListener('pointerdown', handleFirstGesture, { once: true });
+    window.addEventListener('keydown', handleFirstGesture, { once: true });
+    return () => {
+      window.removeEventListener('pointerdown', handleFirstGesture);
+      window.removeEventListener('keydown', handleFirstGesture);
+    };
+  }, []);
+
+  // 游戏核心态势与自适应 BGM 引擎联动 (连击数、共鸣槽能量、游戏结束)
+  useEffect(() => {
+    sound.updateGameState(streakCount, resonanceEnergy, gameOver);
+    setBgmRuntime(sound.getBGMRuntimeState());
+  }, [streakCount, resonanceEnergy, gameOver]);
+
+  // 当音频浮层打开时，定时刷新 BGM 运行时态（和弦/BPM/层增益）
+  useEffect(() => {
+    if (!isAudioModalOpen) return;
+    const interval = setInterval(() => {
+      setBgmRuntime(sound.getBGMRuntimeState());
+    }, 400);
+    return () => clearInterval(interval);
+  }, [isAudioModalOpen]);
+
+  const handleUpdateAudioPreferences = useCallback(
+    (partial: Partial<AudioPreferences>) => {
+      sound.updatePreferences(partial);
+      const updated = sound.getPreferences();
+      setAudioPreferences(updated);
+      setIsMuted(updated.bgmMuted && updated.sfxMuted);
+      setBgmRuntime(sound.getBGMRuntimeState());
+    },
+    []
+  );
 
   // Dragging and preview state
   const [activeDrag, setActiveDrag] = useState<ActiveDragState | null>(null);
@@ -289,8 +348,9 @@ export default function App() {
         // 1. Calculate placed blocks count
         const placedBlocks = piece.shape.flat().filter((v) => v === 1).length;
 
-        // Immediate tactile placement snap sound (T=0ms) - plays for EVERY piece placement!
-        sound.playPiecePlaced(placedBlocks);
+        // Immediate tactile placement snap sound (T=0ms) - plays for EVERY piece placement with spatial panner!
+        const pieceCenterCol = col + (piece.shape[0].length - 1) / 2;
+        sound.playPiecePlaced(placedBlocks, pieceCenterCol);
 
         if (isKeystonePiece) {
           setKeystoneCooldownSteps(15);
@@ -313,7 +373,13 @@ export default function App() {
         };
         let currentEntities: PlacedPieceEntity[] = [...placedPieces, newEntity];
 
-        // 任务 010: 引力星块落盘转化核心机制
+        // 任务 013/014: 引力星块「落盘即爆」（Impact Detonation）核心机制
+        let singularityBlast: {
+          blastRows: number[];
+          blastCols: number[];
+          impactCells: Array<{ r: number; c: number }>;
+        } | null = null;
+
         if (isResonancePiece) {
           const bottomCell = findBottomMostCellInPiece(piece.shape);
           const coreRow = row + bottomCell.r;
@@ -332,7 +398,11 @@ export default function App() {
           };
           currentEntities.push(resonanceGravityCoreEntity);
 
-          sound.playResonanceCollapseSound();
+          // 奇点落盘触碰瞬间，立刻引爆十字等离子贯穿冲击波！
+          singularityBlast = calculateSingularityCrossBlast(coreRow, coreCol);
+          sound.playSingularityBurstSound(coreCol);
+          setSingularityBlastCenter({ row: coreRow, col: coreCol });
+          setTimeout(() => setSingularityBlastCenter(null), 450);
           setResonanceEnergy(0);
         }
 
@@ -368,7 +438,17 @@ export default function App() {
 
         while (hasMoreCascade && cascadeStep <= 10) {
           // 4. Check line eliminations
-          const { clearedRows, clearedCols, totalLines } = checkAndClearLines(currentBoard);
+          const scanResult = checkAndClearLines(currentBoard);
+          let clearedRows = [...scanResult.clearedRows];
+          let clearedCols = [...scanResult.clearedCols];
+
+          // 任务 013/014: 若为引力星块，首轮必出十字全线贯穿消解
+          if (cascadeStep === 1 && singularityBlast) {
+            clearedRows = Array.from(new Set([...clearedRows, ...singularityBlast.blastRows]));
+            clearedCols = Array.from(new Set([...clearedCols, ...singularityBlast.blastCols]));
+          }
+
+          const totalLines = clearedRows.length + clearedCols.length;
 
           if (totalLines === 0) {
             // If no lines cleared at all on initial drop
@@ -382,13 +462,13 @@ export default function App() {
           totalClearedInTurn += totalLines;
           maxCascadeStep = Math.max(maxCascadeStep, cascadeStep);
 
-          // Check if any existing 1x1 Gravity Block on board was eliminated
+          // Check if any 1x1 Gravity Block on board was eliminated or singularity center triggered
           const clearedGravityCores = currentEntities.filter(
             (e) =>
               e.isGravityBlock &&
               (clearedRows.includes(e.startRow) || clearedCols.includes(e.startCol))
           );
-          const hasShatterShockwave = clearedGravityCores.length > 0;
+          const hasShatterShockwave = clearedGravityCores.length > 0 || (cascadeStep === 1 && Boolean(singularityBlast));
           if (hasShatterShockwave) {
             hasTriggeredShatterInTurn = true;
           }
@@ -396,11 +476,17 @@ export default function App() {
             row: c.startRow,
             col: c.startCol,
           }));
+          if (cascadeStep === 1 && singularityBlast && shatterCenters.length === 0) {
+            shatterCenters.push({
+              row: singularityBlast.blastRows[0],
+              col: singularityBlast.blastCols[0],
+            });
+          }
 
-          // 🌟 任务 011 核心跃迁判定：
-          // 若本回合震碎过引力核心，且后续步骤（cascadeStep > 1）激发了深层连环消行，
-          // 全局重力瞬间解锁！
-          if (hasTriggeredShatterInTurn && cascadeStep > 1) {
+          // 🌟 任务 013/014 核心雪崩引信阈值跃迁：
+          // 若本回合触发过 5x5 引力核心裂变震碎，且后续步骤（cascadeStep > 1）碎石沉降激发了任意新的消行（totalLines >= 1），
+          // 全局重力大雪崩 100% 确定性解锁！
+          if (hasTriggeredShatterInTurn && cascadeStep > 1 && totalLines >= 1) {
             isGlobalGravityUnlocked = true;
           }
 
@@ -412,18 +498,23 @@ export default function App() {
             clearedCols
           );
 
-          // Calculate score using Task 010 unified closed-loop formula
-          const stepScore = calculateStepScore(
+          // Calculate score using Task 010 unified closed-loop formula + Task 013/014 Singularity Bonus
+          let stepScore = calculateStepScore(
             cascadeStep === 1 ? placedBlocks : 0,
             totalLines,
             cascadeStep,
             streakCount
           );
+          if (cascadeStep === 1 && isResonancePiece) {
+            stepScore += 300; // 奇点十字大招奖励
+          }
           setScore((prev) => prev + stepScore);
 
           // Audio & Notification Toast
           let toastTitle = '';
-          if (hasShatterShockwave) {
+          if (cascadeStep === 1 && isResonancePiece) {
+            toastTitle = `⚡ 引力奇点坍缩! 十字引力波贯穿爆破 (+${stepScore})`;
+          } else if (hasShatterShockwave) {
             sound.playGlobalGravityPulse();
             sound.playDebrisFracture();
             toastTitle = `引力核心震碎! 5x5区域积木崩落 (+${stepScore})`;
@@ -481,7 +572,7 @@ export default function App() {
           }
 
           // 5. BFS topological cutting into 4-connected components & debris, plus 5x5 shockwave shattering
-          const { remainingEntities, newlyCreatedDebrisIds } = splitAndTrimCutEntities(
+          const { remainingEntities } = splitAndTrimCutEntities(
             currentEntities,
             clearedRows,
             clearedCols,
@@ -502,33 +593,18 @@ export default function App() {
           // Anticipation Hang-Time (110ms)
           await sleep(GRAVITY_KINETICS_CONFIG.anticipationHangTimeMs);
 
-          // 6. Determine which entities should fall under gravity:
-          // 任务 011 物理重力两阶段机制：
-          // 阶段二（全局重力大雪崩）：若全局重力已解锁，全场所有存活积木实体一齐受重力垂直下落，激发更多连环消！
-          // 阶段一（引信阶段）：仅新震碎的 1x1 碎块 + 场上的重力方块下落。
-          let targetDebrisIds: Set<string>;
-          if (isGlobalGravityUnlocked) {
-            targetDebrisIds = new Set<string>(currentEntities.map((e) => e.id));
-          } else {
-            targetDebrisIds = new Set<string>([
-              ...newlyCreatedDebrisIds,
-              ...currentEntities.filter((e) => e.isGravityBlock).map((e) => e.id),
-            ]);
-          }
-
-          if (targetDebrisIds.size === 0) {
-            break;
-          }
-
-          // Compute gravity cascade drops
-          const dropResult = computeGravityCascadeDrops(
+          // 6. 任务 013/014: 真实支撑力结构沉降系统与全局重力大雪崩
+          // 彻底摒弃以往“未被切碎的俄罗斯方块反重力悬空钉在天花板”的缺陷！
+          // 自底向上光线投影算法 computeStructuralSupportDrops 精确检测全场每个积木实体：
+          // 如果承重柱被拆除（下方被掏空，无任何支撑物），方块整体遵循牛顿物理垂直滑落，
+          // 有支撑物的方块则稳稳维持原有形态。
+          const dropResult = computeStructuralSupportDrops(
             currentBoard,
-            currentEntities,
-            targetDebrisIds
+            currentEntities
           );
 
           if (!dropResult.hasMovement) {
-            // Everything has settled
+            // 全场势能已平衡，无任何实体下落
             break;
           }
 
@@ -548,8 +624,8 @@ export default function App() {
           // Wait for dynamic fall animation to reach ground
           await sleep(dropDuration);
 
-          // Landing impact thud
-          sound.playDebrisLanding(dropResult.maxDistance);
+          // Landing impact thud (增强真实实体落地厚重撞击声)
+          sound.playStructuralThudSound(dropResult.maxDistance);
 
           // Settle pause before next cascade step check
           await sleep(GRAVITY_KINETICS_CONFIG.settlePauseMs);
@@ -648,6 +724,34 @@ export default function App() {
     ]
   );
 
+  // 任务 016: 引力奇点十字瞄准预览与音效联动计算
+  const updateSingularityCrossPreview = useCallback(
+    (piece: Piece | null, target: PreviewPlacement | null) => {
+      if (!piece || !piece.isResonancePiece || !target) {
+        setSingularityCrossPreview(null);
+        return;
+      }
+
+      const preview = computeSingularityCrosshairPreview(
+        board,
+        piece,
+        target.row,
+        target.col,
+        placedPieces,
+        target.isValid
+      );
+      setSingularityCrossPreview(preview);
+
+      // 任务 016 音效：准星瞄准微动刻度音
+      sound.playCrosshairAimTick(target.isValid);
+      // 扫过场上连锁引力核心时触发高能锁定蜂鸣
+      if (preview.chainedGravityCores.length > 0) {
+        sound.playChainedCoreLockAlert();
+      }
+    },
+    [board, placedPieces]
+  );
+
   // Setup active pointer drag
   const handlePointerStartDrag = (
     piece: Piece,
@@ -662,9 +766,9 @@ export default function App() {
     const pieceWidth = piece.shape[0].length * cellPixelSize;
     const pieceHeight = piece.shape.length * cellPixelSize;
 
-    // Anchor: center on mouse; on touch, lift up by 55px to avoid finger occlusion
+    // Anchor: center on mouse; on touch, lift up by 68px to avoid finger occlusion (任务 016 规范)
     const anchorX = pieceWidth / 2;
-    const anchorY = isTouch ? pieceHeight + 50 : pieceHeight / 2;
+    const anchorY = isTouch ? pieceHeight + 68 : pieceHeight / 2;
 
     const initialDrag: ActiveDragState = {
       piece,
@@ -680,9 +784,16 @@ export default function App() {
 
     setActiveDrag(initialDrag);
 
+    // 抓取引力星块即刻触发引力充能低鸣
+    if (piece.isResonancePiece) {
+      sound.playSingularityChargeWhine();
+    }
+
     // Initial raycast
     const target = calculateBoardTarget(clientX, clientY, anchorX, anchorY, piece);
     setPreviewPlacement(target);
+    updateSingularityCrossPreview(piece, target);
+
     if (target && target.isValid) {
       const sim = getSimulatedClearLines(board, piece, target.row, target.col);
       setSimulatedClears(sim.totalLines > 0 ? sim : null);
@@ -715,6 +826,7 @@ export default function App() {
         activeDrag.piece
       );
       setPreviewPlacement(target);
+      updateSingularityCrossPreview(activeDrag.piece, target);
 
       // Pre-placement elimination preview
       if (target && target.isValid) {
@@ -744,6 +856,7 @@ export default function App() {
         setActiveDrag(null);
         setPreviewPlacement(null);
         setSimulatedClears(null);
+        setSingularityCrossPreview(null);
         return;
       }
 
@@ -769,6 +882,7 @@ export default function App() {
       setActiveDrag(null);
       setPreviewPlacement(null);
       setSimulatedClears(null);
+      setSingularityCrossPreview(null);
     };
 
     window.addEventListener('pointermove', handlePointerMove, { passive: true });
@@ -780,7 +894,7 @@ export default function App() {
       window.removeEventListener('pointerup', handlePointerUp);
       window.removeEventListener('pointercancel', handlePointerUp);
     };
-  }, [activeDrag, board, calculateBoardTarget, executePlacePiece]);
+  }, [activeDrag, board, calculateBoardTarget, executePlacePiece, updateSingularityCrossPreview]);
 
   // Click-to-place fallback from selection
   const handleBoardCellClick = (r: number, c: number) => {
@@ -798,11 +912,14 @@ export default function App() {
     if (!selectedPiece || !pos) {
       setPreviewPlacement(null);
       setSimulatedClears(null);
+      setSingularityCrossPreview(null);
       return;
     }
 
     const isValid = canPlacePiece(board, selectedPiece, pos.row, pos.col);
-    setPreviewPlacement({ row: pos.row, col: pos.col, isValid });
+    const target = { row: pos.row, col: pos.col, isValid };
+    setPreviewPlacement(target);
+    updateSingularityCrossPreview(selectedPiece, target);
 
     if (isValid) {
       const sim = getSimulatedClearLines(board, selectedPiece, pos.row, pos.col);
@@ -823,6 +940,7 @@ export default function App() {
     setActiveDrag(null);
     setPreviewPlacement(null);
     setSimulatedClears(null);
+    setSingularityCrossPreview(null);
     if (toastTimeoutRef.current) {
       clearTimeout(toastTimeoutRef.current);
     }
@@ -832,6 +950,7 @@ export default function App() {
     setIsCascading(false);
     setIsGlobalGravityPulseActive(false);
     setShatterShockwaveCenters([]);
+    setSingularityBlastCenter(null);
     setClearingRows([]);
     setClearingCols([]);
 
@@ -904,15 +1023,31 @@ export default function App() {
               onClick={() => {
                 const next = sound.toggleMute();
                 setIsMuted(next);
+                setAudioPreferences(sound.getPreferences());
               }}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs sm:text-sm font-medium transition cursor-pointer"
-              title={isMuted ? '开启音效' : '静音'}
-              aria-label={isMuted ? '开启音效' : '静音'}
+              title={isMuted ? '开启声音' : '一键静音'}
+              aria-label={isMuted ? '开启声音' : '一键静音'}
             >
               {isMuted ? (
                 <VolumeX className="w-4 h-4 text-slate-400" />
               ) : (
                 <Volume2 className="w-4 h-4 text-emerald-400" />
+              )}
+            </button>
+
+            {/* 任务 018: 声学引擎与自适应 BGM 设置按钮 */}
+            <button
+              id="audio-settings-btn"
+              type="button"
+              onClick={() => setIsAudioModalOpen(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 text-xs sm:text-sm font-medium transition cursor-pointer relative"
+              title="自适应音乐与音频设置"
+              aria-label="自适应音乐与音频设置"
+            >
+              <Sliders className="w-4 h-4 text-cyan-400" />
+              {!audioPreferences.bgmMuted && (
+                <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-ping absolute top-1 right-1" />
               )}
             </button>
 
@@ -989,6 +1124,8 @@ export default function App() {
           cellPixelSize={cellPixelSize}
           isGlobalGravityPulseActive={isGlobalGravityPulseActive}
           shatterShockwaveCenters={shatterShockwaveCenters}
+          singularityBlastCenter={singularityBlastCenter}
+          singularityCrossPreview={singularityCrossPreview}
           fallDuration={fallDuration}
           isFeverMode={streakCount >= 5}
         />
@@ -1086,6 +1223,15 @@ export default function App() {
         onClose={() => setIsLeaderboardModalOpen(false)}
         currentUserId={currentUser?.id}
         currentScore={score}
+      />
+
+      {/* 任务 018: 自适应音频控制浮层 */}
+      <AudioSettingsModal
+        isOpen={isAudioModalOpen}
+        onClose={() => setIsAudioModalOpen(false)}
+        preferences={audioPreferences}
+        onUpdatePreferences={handleUpdateAudioPreferences}
+        bgmRuntime={bgmRuntime}
       />
     </div>
   );

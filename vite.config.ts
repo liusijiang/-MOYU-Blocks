@@ -7,9 +7,12 @@ export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
     define: {
-      'process.env.FIRE_DB_URL': JSON.stringify(process.env.FIRE_DB_URL || 'https://d4v5cc8g91htqli3veng.baseapi.memfiredb.com'),
-      'process.env.FIRE_DB_ANON': JSON.stringify(process.env.FIRE_DB_ANON || ''),
-      'process.env.FIRE_DB_SERV': JSON.stringify(process.env.FIRE_DB_SERV || ''),
+      'process.env.FIRE_DB_URL': JSON.stringify(
+        process.env.FIRE_DB_URL || process.env.VITE_FIRE_DB_URL || 'https://d4v5cc8g91htqli3veng.baseapi.memfiredb.com'
+      ),
+      'process.env.FIRE_DB_ANON': JSON.stringify(
+        process.env.FIRE_DB_ANON || process.env.VITE_FIRE_DB_ANON || ''
+      ),
     },
     resolve: {
       alias: {

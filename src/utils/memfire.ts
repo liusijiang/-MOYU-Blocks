@@ -12,9 +12,9 @@ let supabaseClient: SupabaseClient | null = null;
 export function getMemfireClient(): SupabaseClient {
   if (!supabaseClient) {
     const url = MEMFIRE_CONFIG.url;
-    const key = MEMFIRE_CONFIG.anonKey || MEMFIRE_CONFIG.serviceRoleKey;
+    const key = MEMFIRE_CONFIG.anonKey;
     if (!url || !key) {
-      console.warn('MemFireDB URL 或密钥尚未正确配置');
+      console.warn('MemFireDB URL 或匿名公钥尚未配置');
     }
     supabaseClient = createClient(url, key, {
       auth: {
@@ -88,8 +88,8 @@ export function saveStoredUser(user: UserProfile | null) {
 }
 
 /**
- * 1. 登录注册二合一
- * 输入 username + password。如果用户不存在立即注册并返回 security_code；如果已存在则验证密码登录。
+ * 1. 登录注册二合一 (通过数据库受控 RPC: rpc_login_or_register)
+ * 输入 username + password。后端原子完成老用户验密或新用户注册并返回安全码。
  */
 export async function loginOrRegister(
   usernameInput: string,
@@ -105,77 +105,43 @@ export async function loginOrRegister(
       return { user: null as unknown as UserProfile, isNewUser: false, error: '密码长度至少需要 4 位' };
     }
 
-    // 查询该用户名是否存在
-    const { data: existingUser, error: queryErr } = await client
-      .from(MEMFIRE_CONFIG.tables.users)
-      .select('id, username, password_hash, salt, security_code, created_at')
-      .ilike('username', cleanUsername)
-      .maybeSingle();
+    const proposedSecurityCode = generateSecurityCode();
+    const { data, error } = await client.rpc('rpc_login_or_register', {
+      p_username: cleanUsername,
+      p_password: passwordInput,
+      p_security_code: proposedSecurityCode,
+    });
 
-    if (queryErr) {
-      console.error('Query user err:', queryErr);
-      return { user: null as unknown as UserProfile, isNewUser: false, error: '数据库查询异常: ' + queryErr.message };
+    if (error) {
+      console.error('rpc_login_or_register err:', error);
+      return { user: null as unknown as UserProfile, isNewUser: false, error: error.message || '登录异常' };
     }
 
-    if (existingUser) {
-      // 老用户: 验证密码
-      const computedHash = await hashPassword(passwordInput, existingUser.salt);
-      if (computedHash !== existingUser.password_hash) {
-        return { user: null as unknown as UserProfile, isNewUser: false, error: '密码错误，若忘记密码请使用安全码找回' };
-      }
-
-      // 密码正确，更新最后登录时间
-      client
-        .from(MEMFIRE_CONFIG.tables.users)
-        .update({ last_login_at: new Date().toISOString() })
-        .eq('id', existingUser.id)
-        .then(() => {});
-
-      const profile: UserProfile = {
-        id: existingUser.id,
-        username: existingUser.username,
-        createdAt: existingUser.created_at,
-      };
-      saveStoredUser(profile);
-      return { user: profile, isNewUser: false };
-    } else {
-      // 新用户: 执行自动注册流程并生成安全恢复码
-      const salt = generateSalt();
-      const passwordHash = await hashPassword(passwordInput, salt);
-      const securityCode = generateSecurityCode();
-
-      const { data: newUser, error: insertErr } = await client
-        .from(MEMFIRE_CONFIG.tables.users)
-        .insert({
-          username: cleanUsername,
-          password_hash: passwordHash,
-          salt: salt,
-          security_code: securityCode,
-        })
-        .select('id, username, created_at')
-        .single();
-
-      if (insertErr || !newUser) {
-        console.error('Insert user err:', insertErr);
-        return { user: null as unknown as UserProfile, isNewUser: false, error: '注册失败: ' + (insertErr?.message || '未知错误') };
-      }
-
-      const profile: UserProfile = {
-        id: newUser.id,
-        username: newUser.username,
-        securityCode: securityCode,
-        createdAt: newUser.created_at,
-      };
-      saveStoredUser(profile);
-      return { user: profile, isNewUser: true, securityCode };
+    const result = typeof data === 'string' ? JSON.parse(data) : data;
+    if (!result || !result.success) {
+      return { user: null as unknown as UserProfile, isNewUser: false, error: result?.error || '登录或注册失败' };
     }
+
+    const profile: UserProfile = {
+      id: result.user.id,
+      username: result.user.username,
+      securityCode: result.security_code || undefined,
+      createdAt: result.user.created_at,
+    };
+    saveStoredUser(profile);
+
+    return {
+      user: profile,
+      isNewUser: !!result.is_new_user,
+      securityCode: result.security_code,
+    };
   } catch (err: any) {
     return { user: null as unknown as UserProfile, isNewUser: false, error: err?.message || '网络连接异常' };
   }
 }
 
 /**
- * 2. 忘记密码 (仅需 security_code 校验，识别绑定用户)
+ * 2. 忘记密码 (仅需 security_code 校验，通过受控 RPC 反查识别绑定用户)
  */
 export async function verifySecurityCodeOnly(
   securityCodeInput: string
@@ -187,24 +153,27 @@ export async function verifySecurityCodeOnly(
       return { success: false, error: '请输入安全恢复码' };
     }
 
-    const { data: user, error } = await client
-      .from(MEMFIRE_CONFIG.tables.users)
-      .select('id, username, security_code')
-      .eq('security_code', cleanCode)
-      .maybeSingle();
+    const { data, error } = await client.rpc('rpc_verify_security_code', {
+      p_security_code: cleanCode,
+    });
 
-    if (error || !user) {
-      return { success: false, error: '无效的安全码，未找到对应账号' };
+    if (error) {
+      return { success: false, error: error.message || '校验失败' };
     }
 
-    return { success: true, username: user.username, userId: user.id };
+    const result = typeof data === 'string' ? JSON.parse(data) : data;
+    if (!result || !result.success) {
+      return { success: false, error: result?.error || '无效的安全恢复码，未匹配到任何账号' };
+    }
+
+    return { success: true, username: result.username, userId: result.user_id };
   } catch (err: any) {
     return { success: false, error: err?.message || '校验失败' };
   }
 }
 
 /**
- * 3. 忘记密码重设密码 (重设成功后，强制轮换生成全新 security_code)
+ * 3. 忘记密码重设密码 (通过受控 RPC 重设密码并原子轮换全新 security_code)
  */
 export async function resetPasswordWithCode(
   securityCodeInput: string,
@@ -217,46 +186,32 @@ export async function resetPasswordWithCode(
       return { success: false, error: '新密码至少需要 4 位字符' };
     }
 
-    // 1. 查找用户
-    const { data: user, error: findErr } = await client
-      .from(MEMFIRE_CONFIG.tables.users)
-      .select('id, username')
-      .eq('security_code', cleanCode)
-      .maybeSingle();
+    const newSecurityCode = generateSecurityCode();
+    const { data, error } = await client.rpc('rpc_reset_password_with_code', {
+      p_security_code: cleanCode,
+      p_new_password: newPasswordInput,
+      p_new_code: newSecurityCode,
+    });
 
-    if (findErr || !user) {
-      return { success: false, error: '安全码校验不匹配，无法重设密码' };
+    if (error) {
+      return { success: false, error: error.message || '重设密码失败' };
     }
 
-    // 2. 重新加盐并轮换生成全新安全码
-    const newSalt = generateSalt();
-    const newHash = await hashPassword(newPasswordInput, newSalt);
-    const newSecurityCode = generateSecurityCode();
-
-    const { error: updateErr } = await client
-      .from(MEMFIRE_CONFIG.tables.users)
-      .update({
-        password_hash: newHash,
-        salt: newSalt,
-        security_code: newSecurityCode,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', user.id);
-
-    if (updateErr) {
-      return { success: false, error: '更新密码失败: ' + updateErr.message };
+    const result = typeof data === 'string' ? JSON.parse(data) : data;
+    if (!result || !result.success) {
+      return { success: false, error: result?.error || '旧安全恢复码验证失败，拒绝重设密码' };
     }
 
     const updatedProfile: UserProfile = {
-      id: user.id,
-      username: user.username,
-      securityCode: newSecurityCode,
+      id: result.user.id,
+      username: result.user.username,
+      securityCode: result.new_security_code,
     };
     saveStoredUser(updatedProfile);
 
     return {
       success: true,
-      newSecurityCode,
+      newSecurityCode: result.new_security_code,
       user: updatedProfile,
     };
   } catch (err: any) {
@@ -265,7 +220,7 @@ export async function resetPasswordWithCode(
 }
 
 /**
- * 4. 主动修改密码 (需要提供当前的 security_code，修改后轮换新 code)
+ * 4. 主动修改密码 (提供当前 security_code，通过受控 RPC 校验并轮换新 code)
  */
 export async function updatePasswordWithCode(
   userId: string,
@@ -279,36 +234,24 @@ export async function updatePasswordWithCode(
       return { success: false, error: '新密码至少需要 4 位' };
     }
 
-    // 验证当前 security_code
-    const { data: user, error: verifyErr } = await client
-      .from(MEMFIRE_CONFIG.tables.users)
-      .select('id, security_code')
-      .eq('id', userId)
-      .single();
-
-    if (verifyErr || !user || user.security_code !== cleanCode) {
-      return { success: false, error: '当前安全恢复码不正确，无法修改密码' };
-    }
-
-    const newSalt = generateSalt();
-    const newHash = await hashPassword(newPasswordInput, newSalt);
     const newSecurityCode = generateSecurityCode();
+    const { data, error } = await client.rpc('rpc_update_password_with_code', {
+      p_user_id: userId,
+      p_current_code: cleanCode,
+      p_new_password: newPasswordInput,
+      p_new_code: newSecurityCode,
+    });
 
-    const { error: updateErr } = await client
-      .from(MEMFIRE_CONFIG.tables.users)
-      .update({
-        password_hash: newHash,
-        salt: newSalt,
-        security_code: newSecurityCode,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', userId);
-
-    if (updateErr) {
-      return { success: false, error: '修改密码失败: ' + updateErr.message };
+    if (error) {
+      return { success: false, error: error.message || '修改密码失败' };
     }
 
-    return { success: true, newSecurityCode };
+    const result = typeof data === 'string' ? JSON.parse(data) : data;
+    if (!result || !result.success) {
+      return { success: false, error: result?.error || '修改密码失败' };
+    }
+
+    return { success: true, newSecurityCode: result.new_security_code };
   } catch (err: any) {
     return { success: false, error: err?.message || '修改密码失败' };
   }
