@@ -8,10 +8,24 @@ export default defineConfig(() => {
     plugins: [react(), tailwindcss()],
     define: {
       'process.env.FIRE_DB_URL': JSON.stringify(
-        process.env.FIRE_DB_URL || process.env.VITE_FIRE_DB_URL || 'https://d4v5cc8g91htqli3veng.baseapi.memfiredb.com'
+        process.env.FIRE_DB_URL ||
+          process.env.VITE_FIRE_DB_URL ||
+          'https://d4v5cc8g91htqli3veng.baseapi.memfiredb.com'
       ),
       'process.env.FIRE_DB_ANON': JSON.stringify(
-        process.env.FIRE_DB_ANON || process.env.VITE_FIRE_DB_ANON || ''
+        process.env.FIRE_DB_ANON ||
+          process.env.VITE_FIRE_DB_ANON ||
+          'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImV4cCI6MzM0MjQ5Mjk3NywiaWF0IjoxNzY1NjkyOTc3LCJpc3MiOiJzdXBhYmFzZSJ9.8WvEQ-9X7R5r2g-M1tnjOzYhRPcxiqzRKwQAH66NDG4'
+      ),
+      'import.meta.env.VITE_FIRE_DB_URL': JSON.stringify(
+        process.env.FIRE_DB_URL ||
+          process.env.VITE_FIRE_DB_URL ||
+          'https://d4v5cc8g91htqli3veng.baseapi.memfiredb.com'
+      ),
+      'import.meta.env.VITE_FIRE_DB_ANON': JSON.stringify(
+        process.env.FIRE_DB_ANON ||
+          process.env.VITE_FIRE_DB_ANON ||
+          'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImV4cCI6MzM0MjQ5Mjk3NywiaWF0IjoxNzY1NjkyOTc3LCJpc3MiOiJzdXBhYmFzZSJ9.8WvEQ-9X7R5r2g-M1tnjOzYhRPcxiqzRKwQAH66NDG4'
       ),
     },
     resolve: {

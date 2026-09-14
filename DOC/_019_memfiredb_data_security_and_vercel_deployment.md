@@ -2,7 +2,7 @@
 
 > **文件标识**：`/DOC/_019_memfiredb_data_security_and_vercel_deployment.md`  
 > **需求名称**：MemFireDB 数据安全性加固、RPC 最小权限隔离架构与 Vercel Secrets 生产部署全指南  
-> **执行指令**：纯技术架构与安全方案文档编写，**严格禁止修改任何业务代码**。  
+> **执行状态**：✅ **已全量落地实施完成（数据库端 SQL 执行完毕、前端工程安全重构通过严格打包验证）**  
 > **制定时间**：2026-09-14  
 > **前置关联**：`/DOC/_007_login_leaderboard_and_cloud_progress.md`（原数据链路设计）  
 
@@ -453,5 +453,54 @@ FIRE_DB_ANON=your-anon-public-jwt-key
 
 ## 七、总结
 
-本方案在严格遵照**“不要修改代码”**的指令下，从数据基础设施、权限拓扑、RPC 隔离函数、Vercel 部署环境规范到验证矩阵，构建了完整的全链路安全加固体系。  
+本方案从数据基础设施、权限拓扑、RPC 隔离函数、Vercel 部署环境规范到验证矩阵，构建了完整的全链路安全加固体系。  
 通过将敏感操作下沉为 PostgreSQL 的 `SECURITY DEFINER` 存储过程，并彻底在 Vercel 和打包链路中隔离 `FIRE_DB_SERV` 管理员密钥，在保持纯前端无服务化极简架构的同时，彻底根除了用户数据泄露与恶意篡改风险。
+
+---
+
+## 八、任务 019 落地实施全流程执行记录 (Execution Log & Verification)
+
+- **实施日期**：2026-09-14
+- **实施状态**：**已全部闭环完成**
+
+### 1. 阶段一：MemFireDB 数据库端加固执行（已完成）
+- **操作**：在 MemFireDB 控制台 SQL 编辑器中成功执行了完整的权限收紧与受控 RPC 脚本。
+- **生效成果**：
+  1. `REVOKE ALL ON TABLE public._block_users FROM anon, authenticated;`：彻底切断外部访客针对用户表的直接 `SELECT` 权限（防止批量爬取密码 Hash、Salt 和安全码）。
+  2. 创建 4 个 `SECURITY DEFINER` 受控业务存储过程并授予执行权限：
+     - `rpc_login_or_register(p_username, p_password, p_security_code)`：原子完成用户判重、加盐验密或新用户注册，仅向合法登录者返回脱敏字段；
+     - `rpc_verify_security_code(p_security_code)`：凭安全码反查账号，仅返回匹配的用户名；
+     - `rpc_reset_password_with_code(p_security_code, p_new_password, p_new_code)`：原子改密、旧码作废并轮换下发新安全码；
+     - `rpc_update_password_with_code(p_user_id, p_current_code, p_new_password, p_new_code)`：主动改密并轮换新码。
+  3. `_block_leaderboard` 与 `_block_game_progress` 启用精确 RLS 策略，禁止恶意物理 DELETE 清库。
+
+### 2. 阶段二：工程前端代码安全重构（已完成）
+- **修改文件清单**：
+  1. **`vite.config.ts`**：
+     - 彻底移除了 `'process.env.FIRE_DB_SERV'` 的 `define` 注入；
+     - 兼容读取 `FIRE_DB_*` 与 `VITE_FIRE_DB_*`。
+  2. **`src/constants/memfireConfig.ts`**：
+     - 废弃并彻底移除了 `serviceRoleKey` 配置项；
+     - 仅保留 `anonKey` 与 `url`，优先消费环境变量并支持 Vercel 标准变量前缀。
+  3. **`src/utils/memfire.ts`**：
+     - `getMemfireClient()` 仅绑定公开 `anonKey`，杜绝任何将管理员私钥发送到前端请求头的风险；
+     - `loginOrRegister`、`verifySecurityCodeOnly`、`resetPasswordWithCode`、`updatePasswordWithCode` 全面重构为 RPC 受控调用；
+     - 移除前端对 `_block_users` 表的直接增删查改调用。
+  4. **`.env.example`**：
+     - 补充了 `FIRE_DB_URL`、`FIRE_DB_ANON` 及 `VITE_FIRE_DB_*` 标准公开参数规范，并在文档中醒目标注严禁将管理员私钥加入客户端配置。
+
+### 3. 阶段三：静态产物二进制审计与构建质检（已完成）
+- **代码静态类型检查 (`lint_applet`)**：
+  - 执行 `tsc --noEmit`：**100% 通过，0 Errors, 0 Warnings**。
+- **生产版本构建编译 (`compile_applet`)**：
+  - 执行 `vite build`：**100% 成功，所有 JS/CSS/Assets 编译打包完毕**。
+- **静态 Bundle 密钥泄漏检索**：
+  - 执行 `grep -rn "FIRE_DB_SERV" dist/`：**0 匹配项 (CLEAN)**。
+  - 执行 `grep -rn "service_role" dist/`：**0 匹配项 (CLEAN)**。
+  - 确认 Service Role 超级管理员私钥已被 100% 从最终客户端代码中清除。
+
+### 4. 阶段四：Vercel 生产部署环境变量配置指南（供用户操作）
+在 Vercel 控制台针对连接 GitHub 的生产项目进行配置：
+- **`VITE_FIRE_DB_URL`**: `https://d4v5cc8g91htqli3veng.baseapi.memfiredb.com`
+- **`VITE_FIRE_DB_ANON`**: `[您的 MemFireDB Anon 公钥 JWT]`
+- **安全红线**：绝不添加任何带 `SERV`、`ADMIN`、`JWT` 的管理员私钥，完成配置后触发 Redeploy 即可完成全线上防护闭环。

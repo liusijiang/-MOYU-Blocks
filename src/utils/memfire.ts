@@ -329,8 +329,8 @@ export async function upsertHighScore(userId: string, username: string, score: n
         { onConflict: 'user_id' }
       );
     }
-  } catch (err) {
-    console.error('upsertHighScore error', err);
+  } catch (err: any) {
+    console.warn('upsertHighScore network issue:', err?.message || err);
   }
 }
 
@@ -355,8 +355,8 @@ export async function fetchLeaderboard(limit = 50): Promise<LeaderboardEntry[]> 
       highScore: item.high_score,
       achievedAt: item.achieved_at,
     }));
-  } catch (err) {
-    console.error('fetchLeaderboard error', err);
+  } catch (err: any) {
+    console.warn('fetchLeaderboard network issue:', err?.message || err);
     return [];
   }
 }
@@ -366,7 +366,7 @@ export async function fetchLeaderboard(limit = 50): Promise<LeaderboardEntry[]> 
  */
 export async function saveGameProgress(progress: CloudGameProgress): Promise<boolean> {
   try {
-    if (!progress.userId) return false;
+    if (!progress.userId || !MEMFIRE_CONFIG.anonKey) return false;
     const client = getMemfireClient();
     const { error } = await client.from(MEMFIRE_CONFIG.tables.progress).upsert(
       {
@@ -382,12 +382,12 @@ export async function saveGameProgress(progress: CloudGameProgress): Promise<boo
       { onConflict: 'user_id' }
     );
     if (error) {
-      console.error('saveGameProgress error:', error);
+      console.warn('saveGameProgress sync failed:', error.message || error);
       return false;
     }
     return true;
-  } catch (err) {
-    console.error('saveGameProgress error', err);
+  } catch (err: any) {
+    console.warn('saveGameProgress network error:', err?.message || err);
     return false;
   }
 }
@@ -397,7 +397,7 @@ export async function saveGameProgress(progress: CloudGameProgress): Promise<boo
  */
 export async function fetchGameProgress(userId: string): Promise<CloudGameProgress | null> {
   try {
-    if (!userId) return null;
+    if (!userId || !MEMFIRE_CONFIG.anonKey) return null;
     const client = getMemfireClient();
     const { data, error } = await client
       .from(MEMFIRE_CONFIG.tables.progress)
@@ -417,8 +417,8 @@ export async function fetchGameProgress(userId: string): Promise<CloudGameProgre
       isGameOver: !!data.is_game_over,
       updatedAt: data.updated_at,
     };
-  } catch (err) {
-    console.error('fetchGameProgress error', err);
+  } catch (err: any) {
+    console.warn('fetchGameProgress network issue:', err?.message || err);
     return null;
   }
 }
@@ -428,7 +428,7 @@ export async function fetchGameProgress(userId: string): Promise<CloudGameProgre
  */
 export async function clearGameProgress(userId: string): Promise<void> {
   try {
-    if (!userId) return;
+    if (!userId || !MEMFIRE_CONFIG.anonKey) return;
     const client = getMemfireClient();
     await client
       .from(MEMFIRE_CONFIG.tables.progress)
@@ -437,7 +437,7 @@ export async function clearGameProgress(userId: string): Promise<void> {
         updated_at: new Date().toISOString(),
       })
       .eq('user_id', userId);
-  } catch (err) {
-    console.error('clearGameProgress err', err);
+  } catch (err: any) {
+    console.warn('clearGameProgress network issue:', err?.message || err);
   }
 }
