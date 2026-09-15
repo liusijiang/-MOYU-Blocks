@@ -1,7 +1,7 @@
 import React from 'react';
 import { Piece } from '../types';
 import { getPieceCellBorders, findBottomMostCellInPiece } from '../utils/gameLogic';
-import { Disc3, Sparkles, Crosshair } from 'lucide-react';
+import { Disc3, Sparkles, Crosshair, ChevronsLeft, ChevronsRight } from 'lucide-react';
 
 interface ConnectedPieceProps {
   piece: Piece;
@@ -27,6 +27,8 @@ export const ConnectedPiece: React.FC<ConnectedPieceProps> = ({
   const numRows = piece.shape.length;
   const numCols = piece.shape[0].length;
   const isGravityCore = Boolean(piece.isGravityBlock);
+  const isPrism = Boolean(piece.isGravityPrism);
+  const prismDir = piece.vectorDirection || 'left';
   const isKeystone = Boolean(piece.isKeystone);
   const isResonance = Boolean(piece.isResonancePiece);
   const resonanceCorePos = isResonance ? findBottomMostCellInPiece(piece.shape) : null;
@@ -83,6 +85,9 @@ export const ConnectedPiece: React.FC<ConnectedPieceProps> = ({
           } else if (isGravityCore) {
             borderClasses = 'border-2 border-cyan-400 rounded-lg shadow-[0_0_16px_rgba(6,182,212,0.85)] ring-2 ring-cyan-300/70';
             bgClass = 'bg-gradient-to-br from-slate-950 via-cyan-950 to-teal-950';
+          } else if (isPrism) {
+            borderClasses = 'border-2 border-emerald-400 rounded-lg shadow-[0_0_16px_rgba(16,185,129,0.85)] ring-2 ring-emerald-300/70';
+            bgClass = 'bg-gradient-to-br from-slate-950 via-emerald-950 to-teal-950';
           } else if (isResonance) {
             const isCoreCell = resonanceCorePos?.r === r && resonanceCorePos?.c === c;
             if (isCoreCell) {
@@ -148,6 +153,30 @@ export const ConnectedPiece: React.FC<ConnectedPieceProps> = ({
                       animationDuration: '2.4s',
                     }}
                   />
+                </div>
+              )}
+
+              {/* Gravity prism directional energy icon (Electric Emerald & Chevrons Left/Right) */}
+              {isPrism && !isGhost && (
+                <div className="relative flex items-center justify-center w-full h-full">
+                  <div className="absolute w-3.5 h-3.5 rounded-full bg-emerald-400/30 blur-[2px] animate-pulse" />
+                  {prismDir === 'left' ? (
+                    <ChevronsLeft
+                      className="text-emerald-300 drop-shadow-[0_0_8px_rgba(16,185,129,0.95)] animate-pulse"
+                      style={{
+                        width: Math.max(16, cellSize * 0.72),
+                        height: Math.max(16, cellSize * 0.72),
+                      }}
+                    />
+                  ) : (
+                    <ChevronsRight
+                      className="text-emerald-300 drop-shadow-[0_0_8px_rgba(16,185,129,0.95)] animate-pulse"
+                      style={{
+                        width: Math.max(16, cellSize * 0.72),
+                        height: Math.max(16, cellSize * 0.72),
+                      }}
+                    />
+                  )}
                 </div>
               )}
 

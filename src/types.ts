@@ -12,6 +12,8 @@ export interface Piece {
   slotIndex?: number;
   isDebris?: boolean;
   isGravityBlock?: boolean;
+  isGravityPrism?: boolean;           // 任务 026/027: 是否为引力折向棱镜
+  vectorDirection?: 'left' | 'right';  // 任务 026/027: 横向脉冲推进方向
   isResonancePiece?: boolean;  // 任务 010: 是否被引力共鸣星块赋能
   isKeystone?: boolean;        // 任务 010: 是否为 1x1 稀缺微晶基石
   hasSingularityCore?: boolean; // 任务 016: 标记内部包含奇点发射星核
@@ -68,6 +70,8 @@ export interface PlacedPieceEntity {
   shape: number[][];
   isDebris?: boolean;
   isGravityBlock?: boolean;
+  isGravityPrism?: boolean;           // 任务 026/027: 是否为引力折向棱镜
+  vectorDirection?: 'left' | 'right';  // 任务 026/027: 横向脉冲推进方向
   hasStructuralSupport?: boolean;
   dropOffset?: number;
   hasSingularityCore?: boolean;

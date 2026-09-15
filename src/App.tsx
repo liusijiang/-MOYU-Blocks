@@ -26,6 +26,8 @@ import {
   computeSingularityCrosshairPreview,
   computeStructuralSupportDrops,
   checkAndSpawnGravityBlock,
+  checkAndSpawnSpecialEntity,
+  computeLateralImpulse,
   rebuildBoardFromEntities,
   getAdaptiveRandomPiece,
   calculateResonanceDelta,
@@ -493,6 +495,12 @@ export default function App() {
               e.isGravityBlock &&
               (clearedRows.includes(e.startRow) || clearedCols.includes(e.startCol))
           );
+          // 任务 026/027: 检测是否有 1x1 引力折向棱镜被消除激活
+          const clearedPrisms = currentEntities.filter(
+            (e) =>
+              e.isGravityPrism &&
+              (clearedRows.includes(e.startRow) || clearedCols.includes(e.startCol))
+          );
           const hasShatterShockwave = clearedGravityCores.length > 0 || (cascadeStep === 1 && Boolean(singularityBlast));
           if (hasShatterShockwave) {
             hasTriggeredShatterInTurn = true;
@@ -515,9 +523,8 @@ export default function App() {
             isGlobalGravityUnlocked = true;
           }
 
-          // Check if this step qualifies for spawning a new 1x1 Gravity Block
-          // Rule: 2+ rows, or 2+ cols, or 1+ row AND 1+ col
-          const spawnedGravityBlock = checkAndSpawnGravityBlock(
+          // 任务 026/027: 双子引信分流衍生裁决（横消生核，纵消生棱）
+          const spawnedSpecialEntity = checkAndSpawnSpecialEntity(
             currentBoard,
             clearedRows,
             clearedCols
@@ -539,6 +546,8 @@ export default function App() {
           let toastTitle = '';
           if (cascadeStep === 1 && isResonancePiece) {
             toastTitle = `⚡ 引力奇点坍缩! 十字引力波贯穿爆破 (+${stepScore})`;
+          } else if (clearedPrisms.length > 0) {
+            toastTitle = `🌀 引力棱镜折向! 横向物理脉冲压实 (+${stepScore})`;
           } else if (hasShatterShockwave) {
             sound.playGlobalGravityPulse();
             sound.playDebrisFracture();
@@ -605,9 +614,13 @@ export default function App() {
           );
 
           let postCutEntities = remainingEntities;
-          if (spawnedGravityBlock) {
-            postCutEntities = [...postCutEntities, spawnedGravityBlock];
-            sound.playGravityBlockSpawn();
+          if (spawnedSpecialEntity) {
+            postCutEntities = [...postCutEntities, spawnedSpecialEntity];
+            if (spawnedSpecialEntity.isGravityPrism) {
+              sound.playPrismSpawnSound();
+            } else {
+              sound.playGravityBlockSpawn();
+            }
           }
 
           currentBoard = rebuildBoardFromEntities(postCutEntities);
@@ -615,21 +628,42 @@ export default function App() {
           setPlacedPieces(currentEntities);
           setBoard(currentBoard);
 
-          // Anticipation Hang-Time (110ms)
+          // 任务 026/027: 瞬态横向物理脉冲推进（Lateral Impulse）
+          // 若本步消除了引力折向棱镜，以被消除棱镜的推进矢量（若多个以首个为准）触发整盘横向拍紧
+          if (clearedPrisms.length > 0) {
+            const prismDirection = clearedPrisms[0].vectorDirection || 'left';
+            sound.playLateralImpulseSound(prismDirection);
+
+            const lateralResult = computeLateralImpulse(
+              currentBoard,
+              currentEntities,
+              prismDirection
+            );
+
+            if (lateralResult.hasMovement) {
+              currentBoard = lateralResult.updatedBoard;
+              currentEntities = lateralResult.updatedEntities;
+              setPlacedPieces(currentEntities);
+              setBoard(currentBoard);
+
+              // 给予横向平移吸附动画缓冲 (120ms)
+              await sleep(GRAVITY_KINETICS_CONFIG.lateralImpulseDurationMs);
+            }
+          }
+
+          // Anticipation Hang-Time (65ms)
           await sleep(GRAVITY_KINETICS_CONFIG.anticipationHangTimeMs);
 
           // 6. 任务 013/014: 真实支撑力结构沉降系统与全局重力大雪崩
-          // 彻底摒弃以往“未被切碎的俄罗斯方块反重力悬空钉在天花板”的缺陷！
           // 自底向上光线投影算法 computeStructuralSupportDrops 精确检测全场每个积木实体：
-          // 如果承重柱被拆除（下方被掏空，无任何支撑物），方块整体遵循牛顿物理垂直滑落，
-          // 有支撑物的方块则稳稳维持原有形态。
+          // 接驳横向脉冲后的地貌，掏空的方块垂直滑落，落稳后继续循环检测后续连消
           const dropResult = computeStructuralSupportDrops(
             currentBoard,
             currentEntities
           );
 
           if (!dropResult.hasMovement) {
-            // 全场势能已平衡，无任何实体下落
+            // 全场势能已平衡，无任何实体下落；如果刚刚有棱镜横向推动，可能已直接产生稳态
             break;
           }
 

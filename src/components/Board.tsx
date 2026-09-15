@@ -146,11 +146,11 @@ export const Board: React.FC<BoardProps> = ({
           {placedPieces.map((entity) => (
             <div
               key={entity.id}
-              className="absolute pointer-events-none z-10 will-change-[top]"
+              className="absolute pointer-events-none z-10 will-change-[top,left]"
               style={{
                 top: `${entity.startRow * cellPixelSize}px`,
                 left: `${entity.startCol * cellPixelSize}px`,
-                transition: `top ${fallDuration}ms ${GRAVITY_KINETICS_CONFIG.easingCurve}`,
+                transition: `top ${fallDuration}ms ${GRAVITY_KINETICS_CONFIG.easingCurve}, left ${GRAVITY_KINETICS_CONFIG.lateralImpulseDurationMs}ms cubic-bezier(0.25, 1, 0.5, 1)`,
               }}
             >
               <ConnectedPiece
@@ -162,6 +162,8 @@ export const Board: React.FC<BoardProps> = ({
                   shape: entity.shape,
                   isDebris: entity.isDebris,
                   isGravityBlock: entity.isGravityBlock,
+                  isGravityPrism: entity.isGravityPrism,
+                  vectorDirection: entity.vectorDirection,
                 }}
                 cellSize={cellPixelSize}
                 isCellClearing={(pr, pc) =>

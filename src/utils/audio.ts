@@ -1377,6 +1377,81 @@ class SoundEngine {
   public playSingularityBurstSound(col: number = 4.5) {
     this.playSingularityBurst(col);
   }
+
+  /**
+   * 24. 任务 026/027: 引力折向棱镜诞生结晶音 (磁场偏转线圈通电就绪)
+   */
+  public playPrismSpawnSound() {
+    if (this.preferences.sfxMuted) return;
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(350, now);
+    osc.frequency.exponentialRampToValueAtTime(920, now + 0.16);
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.18, now + 0.005);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+
+    osc.connect(gain);
+    this.connectToSFX(gain);
+    osc.start(now);
+    osc.stop(now + 0.18);
+  }
+
+  /**
+   * 25. 任务 026/027: 瞬态横向脉冲滑移拍紧音 (金属导轨滑行与巨型闸门闭合)
+   */
+  public playLateralImpulseSound(direction: 'left' | 'right' = 'left') {
+    if (this.preferences.sfxMuted) return;
+    const ctx = this.getContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+
+    // 触发侧链闪避 BGM 300ms
+    this.busManager.triggerSidechainDucking(0.35, 300);
+
+    // 1. 高频金属导轨滑行声 (带通滤波锯齿波)
+    const osc = ctx.createOscillator();
+    const filter = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+
+    osc.type = 'sawtooth';
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(direction === 'left' ? 1200 : 900, now);
+    filter.frequency.exponentialRampToValueAtTime(300, now + 0.14);
+    filter.Q.setValueAtTime(3.0, now);
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.2, now + 0.006);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    this.connectToSFX(gain, direction === 'left' ? 2 : 7);
+    osc.start(now);
+    osc.stop(now + 0.15);
+
+    // 2. 闭合撞击沉闷低音炮
+    const subOsc = ctx.createOscillator();
+    const subGain = ctx.createGain();
+    subOsc.type = 'sine';
+    subOsc.frequency.setValueAtTime(110, now + 0.06);
+    subOsc.frequency.exponentialRampToValueAtTime(40, now + 0.22);
+
+    subGain.gain.setValueAtTime(0.0001, now + 0.06);
+    subGain.gain.linearRampToValueAtTime(0.25, now + 0.065);
+    subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+
+    subOsc.connect(subGain);
+    this.connectToSFX(subGain);
+    subOsc.start(now + 0.06);
+    subOsc.stop(now + 0.24);
+  }
 }
 
 export const sound = new SoundEngine();

@@ -82,6 +82,8 @@ export interface GravityKineticsConfig {
   anticipationHangTimeMs: number;
   /** 碎片落稳后至下一次次级连环消除检验之间的稳定缓冲时间 (ms) */
   settlePauseMs: number;
+  /** 任务 026/027: 瞬态横向物理脉冲滑移时长 (ms) */
+  lateralImpulseDurationMs: number;
   /** 级联消除最大递归深度上限 (死循环保险) */
   maxCascadeDepth: number;
 
@@ -174,6 +176,8 @@ export const GRAVITY_KINETICS_CONFIG: GravityKineticsConfig = {
   anticipationHangTimeMs: 65,
   // 紧凑落稳休止 (80ms -> 45ms)
   settlePauseMs: 45,
+  // 瞬态横向脉冲时延 (120ms)
+  lateralImpulseDurationMs: 120,
   // 安全级联递归上限 (10次)
   maxCascadeDepth: 10,
 

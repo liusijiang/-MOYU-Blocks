@@ -81,6 +81,9 @@ export const TETROMINO_BASES: TetrominoBaseConfig[] = [
 ];
 
 export const GRAVITY_BLOCK_COLOR = 'bg-cyan-500';
+export const GRAVITY_PRISM_COLOR = 'bg-emerald-500';
+export const GRAVITY_PRISM_BORDER_COLOR = 'border-emerald-400';
+export const GRAVITY_PRISM_GRADIENT = 'bg-gradient-to-br from-slate-950 via-emerald-950 to-teal-950';
 export const KEYSTONE_BLOCK_COLOR = 'bg-amber-400';
 export const KEYSTONE_BORDER_COLOR = 'border-amber-300';
 

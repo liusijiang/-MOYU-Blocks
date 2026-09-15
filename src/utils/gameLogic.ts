@@ -1,5 +1,6 @@
 import {
   BoardState,
+  CellColor,
   Piece,
   CellBorderInfo,
   EliminationPreview,
@@ -8,6 +9,7 @@ import {
 } from '../types';
 import {
   GRAVITY_BLOCK_COLOR,
+  GRAVITY_PRISM_COLOR,
   PIECE_TEMPLATES,
   getRandomPiece,
   createKeystonePiece,
@@ -826,6 +828,206 @@ export function checkAndSpawnGravityBlock(
     shape: [[1]],
     isDebris: false,
     isGravityBlock: true,
+  };
+}
+
+/**
+ * 任务 026/027: 启发式地貌势能自动寻优算法
+ * 扫描当前棋盘左右两侧的实体方块密度，永远锁定向积木密集侧推进
+ * 势能寻优法则：向积木更密集的一侧挤压，最容易迅速凑满整列消除，并在稀疏侧释放大平原！
+ */
+export function calculatePrismVectorDirection(board: BoardState): 'left' | 'right' {
+  let leftMass = 0;
+  let rightMass = 0;
+
+  for (let r = 0; r < BOARD_SIZE; r++) {
+    for (let c = 0; c < 5; c++) {
+      if (board[r][c] !== null) leftMass++;
+    }
+    for (let c = 5; c < BOARD_SIZE; c++) {
+      if (board[r][c] !== null) rightMass++;
+    }
+  }
+
+  return leftMass >= rightMass ? 'left' : 'right';
+}
+
+/**
+ * 任务 026/027: 双子特殊引信生成裁决函数（横消生核，纵消生棱）
+ * 1. 消除线数 < 2: 不生成任何引信
+ * 2. 纯横向消除 (clearedCols.length === 0): 孕育 1x1 引力核心 (Gravity Core, 5x5 裂变)
+ * 3. 包含纵向消除 (clearedCols.length >= 1): 孕育 1x1 引力折向棱镜 (Gravity Prism, 瞬态横向脉冲自愈)
+ */
+export function checkAndSpawnSpecialEntity(
+  board: BoardState,
+  clearedRows: number[],
+  clearedCols: number[]
+): PlacedPieceEntity | null {
+  const lineCount = clearedRows.length + clearedCols.length;
+  if (lineCount < 2) return null;
+
+  // 分支 A: 纯横向消除 -> 保持经典引力核心孕育
+  if (clearedCols.length === 0) {
+    return checkAndSpawnGravityBlock(board, clearedRows, clearedCols);
+  }
+
+  // 分支 B: 包含纵向消除 -> 孕育引力折向棱镜 (Gravity Prism)
+  const candidateCells: [number, number][] = [];
+
+  // 1. 优先选择横纵消除交界的断口空位（消除中心断口）
+  for (const r of clearedRows) {
+    for (const c of clearedCols) {
+      if (r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE) {
+        if (board[r][c] === null) {
+          candidateCells.push([r, c]);
+        }
+      }
+    }
+  }
+
+  // 2. 次选被消除纵列的纵向中段空位 (Row in [3, 6])
+  if (candidateCells.length === 0) {
+    for (const c of clearedCols) {
+      for (let r = 3; r <= 6; r++) {
+        if (r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE) {
+          if (board[r][c] === null) candidateCells.push([r, c]);
+        }
+      }
+    }
+  }
+
+  // 3. 备选：消除线上的任意空位
+  if (candidateCells.length === 0) {
+    for (const c of clearedCols) {
+      for (let r = 0; r < BOARD_SIZE; r++) {
+        if (board[r][c] === null) candidateCells.push([r, c]);
+      }
+    }
+    for (const r of clearedRows) {
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        if (board[r][c] === null) candidateCells.push([r, c]);
+      }
+    }
+  }
+
+  // 4. 兜底：棋盘任意空网格
+  if (candidateCells.length === 0) {
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        if (board[r][c] === null) candidateCells.push([r, c]);
+      }
+    }
+  }
+
+  if (candidateCells.length === 0) return null;
+
+  const randomIndex = Math.floor(Math.random() * candidateCells.length);
+  const [spawnR, spawnC] = candidateCells[randomIndex];
+  const optimalDirection = calculatePrismVectorDirection(board);
+
+  return {
+    id: `gravity_prism_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+    color: GRAVITY_PRISM_COLOR,
+    startRow: spawnR,
+    startCol: spawnC,
+    shape: [[1]],
+    isDebris: false,
+    isGravityBlock: false,
+    isGravityPrism: true,
+    vectorDirection: optimalDirection,
+  };
+}
+
+/**
+ * 任务 026/027: 计算瞬态横向物理脉冲位移（Lateral Impulse）
+ * 将棋盘每行的方块单元格向目标方向 (left 或 right) 极速压实拍紧
+ * 保持方块单元格颜色完整性，并将重组后的地貌以 1x1 碎石单元包装，
+ * 以便无缝接驳后续基于支撑力的垂直自底向上重力下坠（computeStructuralSupportDrops）
+ */
+export function computeLateralImpulse(
+  board: BoardState,
+  entities: PlacedPieceEntity[],
+  direction: 'left' | 'right'
+): {
+  updatedBoard: BoardState;
+  updatedEntities: PlacedPieceEntity[];
+  hasMovement: boolean;
+} {
+  const newBoard: BoardState = createEmptyBoard();
+  let hasMovement = false;
+
+  // 1. 逐行执行横向平移与拍紧
+  for (let r = 0; r < BOARD_SIZE; r++) {
+    const nonNullCells: CellColor[] = [];
+    for (let c = 0; c < BOARD_SIZE; c++) {
+      if (board[r][c] !== null) {
+        nonNullCells.push(board[r][c]);
+      }
+    }
+
+    if (direction === 'left') {
+      // 靠左对齐：非空格靠左，后部填 null
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        const newColor = c < nonNullCells.length ? nonNullCells[c] : null;
+        newBoard[r][c] = newColor;
+        if (newBoard[r][c] !== board[r][c]) {
+          hasMovement = true;
+        }
+      }
+    } else {
+      // 靠右对齐：前部填 null，非空格靠右
+      const emptyCount = BOARD_SIZE - nonNullCells.length;
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        const newColor = c >= emptyCount ? nonNullCells[c - emptyCount] : null;
+        newBoard[r][c] = newColor;
+        if (newBoard[r][c] !== board[r][c]) {
+          hasMovement = true;
+        }
+      }
+    }
+  }
+
+  if (!hasMovement) {
+    return {
+      updatedBoard: board,
+      updatedEntities: entities,
+      hasMovement: false,
+    };
+  }
+
+  // 2. 将横向拍紧后的网格重构为 1x1 独立刚体碎石实体 (Debris Entities)
+  // 同时保留既有的特殊属性（若原实体存在特殊标识）
+  const updatedEntities: PlacedPieceEntity[] = [];
+  for (let r = 0; r < BOARD_SIZE; r++) {
+    for (let c = 0; c < BOARD_SIZE; c++) {
+      const color = newBoard[r][c];
+      if (color !== null) {
+        const matchingOriginal = entities.find(
+          (e) =>
+            e.startRow === r &&
+            e.startCol === c &&
+            e.shape.length === 1 &&
+            e.shape[0].length === 1
+        );
+        updatedEntities.push({
+          id: matchingOriginal?.id || `lateral_frag_${r}_${c}_${Date.now()}_${Math.random().toString(36).slice(2, 5)}`,
+          color,
+          startRow: r,
+          startCol: c,
+          shape: [[1]],
+          isDebris: true,
+          isGravityBlock: matchingOriginal?.isGravityBlock,
+          isGravityPrism: matchingOriginal?.isGravityPrism,
+          vectorDirection: matchingOriginal?.vectorDirection,
+        });
+      }
+    }
+  }
+
+  return {
+    updatedBoard: newBoard,
+    updatedEntities,
+    hasMovement: true,
   };
 }
 
